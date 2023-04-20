@@ -10,21 +10,21 @@ APlantParts::APlantParts()
   // Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
   PrimaryActorTick.bCanEverTick = true;
   // retrieve all the materials
-  static ConstructorHelpers::FObjectFinder<UMaterial> StemMaterialBaseFinder(TEXT("/Script/Engine.Material'/Game/CPlantBox/Stem.Stem'"));
-  if (StemMaterialBaseFinder.Succeeded())
-  {
-    StemMaterialBase = StemMaterialBaseFinder.Object;
-  }
-  static ConstructorHelpers::FObjectFinder<UMaterial> LeafMaterialBaseFinder(TEXT("/Script/Engine.Material'/Game/CPlantBox/Leaf.Leaf'"));
-  if (LeafMaterialBaseFinder.Succeeded())
-  {
-    LeafMaterialBase = LeafMaterialBaseFinder.Object;
-  }
-  static ConstructorHelpers::FObjectFinder<UMaterial> RootMaterialBaseFinder(TEXT("/Script/Engine.Material'/Game/CPlantBox/Root.Root'"));
-  if (RootMaterialBaseFinder.Succeeded())
-  {
-    RootMaterialBase = RootMaterialBaseFinder.Object;
-  }
+  //static ConstructorHelpers::FObjectFinder<UMaterial> StemMaterialBaseFinder(TEXT("/Script/Engine.Material'/Game/CPlantBox/Stem.Stem'"));
+  //if (StemMaterialBaseFinder.Succeeded())
+  //{
+  //  StemMaterialBase = StemMaterialBaseFinder.Object;
+  //}
+  //static ConstructorHelpers::FObjectFinder<UMaterial> LeafMaterialBaseFinder(TEXT("/Script/Engine.Material'/Game/CPlantBox/Leaf.Leaf'"));
+  //if (LeafMaterialBaseFinder.Succeeded())
+  //{
+  //  LeafMaterialBase = LeafMaterialBaseFinder.Object;
+  //}
+  //static ConstructorHelpers::FObjectFinder<UMaterial> RootMaterialBaseFinder(TEXT("/Script/Engine.Material'/Game/CPlantBox/Root.Root'"));
+  //if (RootMaterialBaseFinder.Succeeded())
+  //{
+  //  RootMaterialBase = RootMaterialBaseFinder.Object;
+  //}
   RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
 }
 

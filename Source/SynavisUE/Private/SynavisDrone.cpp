@@ -157,14 +157,17 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         if(!Jason->HasField("object"))
         {
           // respond with names of all actors
-          FString message = "{\"type\":\"query\",\"name\":\"all\",\"data\":[";
+          FString message = TEXT("{\"type\":\"query\",\"name\":\"all\",\"data\":[");
           TArray<AActor*> Actors;
           UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), Actors);
-          for(auto* Actor : Actors)
+
+          for(auto i = 0; i < Actors.Num(); ++i)
           {
-            message += FString::Printf(TEXT("\"%s\","), *Actor->GetName());
+            message += FString::Printf(TEXT("\"%s\""), *Actors[i]->GetName());
+            if(i < Actors.Num() - 1)
+              message += TEXT(",");
           }
-          message += "]}";
+          message += TEXT("]}");
           this->SendResponse(message);
         }
         else
@@ -174,7 +177,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           {
             FString Name = Target->GetName();
             FString JsonData = ListObjectPropertiesAsJSON(Target);
-            FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":%s,\"data\":%s}"), *Name, *JsonData);
+            FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
             this->SendResponse(message);
           }
         }
@@ -191,11 +194,6 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           Triangles.Empty();
           UVs.Empty();
         }
-        else if (Name == "frametime")
-        {
-          float frametime = GetWorld()->GetDeltaSeconds();
-          FString message = FString::Printf(TEXT("{\"type\":\"frametime\",\"value\":%f}"), frametime);
-        }
       }
       
     else if (type == "info")
@@ -203,17 +201,17 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       if (Jason->HasField("frametime"))
       {
         const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
-        OnPixelStreamingResponse.Broadcast(Response);
+        SendResponse(Response);
       }
       else if (Jason->HasField("memory"))
       {
         const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
-        OnPixelStreamingResponse.Broadcast(Response);
+        SendResponse(Response);
       }
       else if (Jason->HasField("fps"))
       {
         const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
-        OnPixelStreamingResponse.Broadcast(Response);
+        SendResponse(Response);
       }
       else if (Jason->HasField("object"))
       {
@@ -273,8 +271,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
 
 void ASynavisDrone::SendResponse(FString Descriptor)
 {
-  uint8* data = (uint8*)TCHAR_TO_UTF8(*Descriptor);
-  FString Response(reinterpret_cast<TCHAR*>(data));
+  FString Response(reinterpret_cast<TCHAR*>(TCHAR_TO_ANSI(*Descriptor)));
   UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor);
   OnPixelStreamingResponse.Broadcast(Response);
 }
@@ -421,12 +418,18 @@ FString ASynavisDrone::ListObjectPropertiesAsJSON(UObject* Object)
 {
   const UClass* Class = Object->GetClass();
   FString OutputString = TEXT("{");
+  
   for (TFieldIterator<FProperty> It(Class, EFieldIteratorFlags::IncludeSuper); It; ++It)
   {
     FProperty* Property = *It;
     auto name = Property->GetName();
     auto type = Property->GetCPPType();
-    OutputString += TEXT(" ") + name + TEXT(": ") + type + TEXT(",");
+    OutputString += TEXT(" \"") + name + TEXT("\": \"") + type + TEXT("\"");
+    // check if we are at the end of the list
+    if(It->Next)
+    {
+      OutputString += TEXT(",");
+    }
   }
   return OutputString + TEXT(" }");
 }
