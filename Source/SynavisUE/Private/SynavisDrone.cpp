@@ -154,21 +154,33 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       }
       else if (type == "query")
       {
-        if(!Jason->HasField("object"))
+        if (!Jason->HasField("object"))
         {
           // respond with names of all actors
           FString message = TEXT("{\"type\":\"query\",\"name\":\"all\",\"data\":[");
           TArray<AActor*> Actors;
           UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), Actors);
 
-          for(auto i = 0; i < Actors.Num(); ++i)
+          for (auto i = 0; i < Actors.Num(); ++i)
           {
             message += FString::Printf(TEXT("\"%s\""), *Actors[i]->GetName());
-            if(i < Actors.Num() - 1)
+            if (i < Actors.Num() - 1)
               message += TEXT(",");
           }
           message += TEXT("]}");
           this->SendResponse(message);
+        }
+        else if(Jason->HasField("property"))
+        {
+          auto* Target = this->GetObjectFromJSON(Jason.Get());
+          if (Target != nullptr)
+          {
+            FString Name = Target->GetName();
+            FString Property = Jason->GetStringField("property");
+            FString JsonData = GetJSONFromObjectProperty(Target, Property);
+            FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
+            this->SendResponse(message);
+          }
         }
         else
         {
@@ -195,51 +207,51 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           UVs.Empty();
         }
       }
-      
-    else if (type == "info")
-    {
-      if (Jason->HasField("frametime"))
-      {
-        const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
-        SendResponse(Response);
-      }
-      else if (Jason->HasField("memory"))
-      {
-        const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
-        SendResponse(Response);
-      }
-      else if (Jason->HasField("fps"))
-      {
-        const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
-        SendResponse(Response);
-      }
-      else if (Jason->HasField("object"))
-      {
-        FString RequestedObjectName = Jason->GetStringField("object");
-        TArray<AActor*> FoundActors;
 
-      }
-    }
-      else if (type == "console")
-    {
-      if (Jason->HasField("command"))
+      else if (type == "info")
       {
-        FString Command = Jason->GetStringField("command");
-        UE_LOG(LogTemp, Warning, TEXT("Console command %s"), *Command);
-        auto* Controller = GetWorld()->GetFirstPlayerController();
-        if (Controller)
+        if (Jason->HasField("frametime"))
         {
-          Controller->ConsoleCommand(Command);
+          const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
+          SendResponse(Response);
+        }
+        else if (Jason->HasField("memory"))
+        {
+          const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
+          SendResponse(Response);
+        }
+        else if (Jason->HasField("fps"))
+        {
+          const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
+          SendResponse(Response);
+        }
+        else if (Jason->HasField("object"))
+        {
+          FString RequestedObjectName = Jason->GetStringField("object");
+          TArray<AActor*> FoundActors;
+
         }
       }
-    }
+      else if (type == "console")
+      {
+        if (Jason->HasField("command"))
+        {
+          FString Command = Jason->GetStringField("command");
+          UE_LOG(LogTemp, Warning, TEXT("Console command %s"), *Command);
+          auto* Controller = GetWorld()->GetFirstPlayerController();
+          if (Controller)
+          {
+            Controller->ConsoleCommand(Command);
+          }
+        }
+      }
       else if (type == "settings")
       {
         // check for settings subobject and put it into member
-        if(Jason->HasField("settings"))
+        if (Jason->HasField("settings"))
         {
           auto Settings = Jason->GetObjectField("settings");
-          LoadFromJSON( Message );
+          LoadFromJSON(Message);
         }
       }
     }
@@ -351,7 +363,7 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
   FJsonSerializer::Deserialize(Reader, Jason);
   for (auto Key : Jason->Values)
   {
-    if(Key.Key.StartsWith(TEXT("type")))
+    if (Key.Key.StartsWith(TEXT("type")))
     {
       // skip network type
       continue;
@@ -418,7 +430,7 @@ FString ASynavisDrone::ListObjectPropertiesAsJSON(UObject* Object)
 {
   const UClass* Class = Object->GetClass();
   FString OutputString = TEXT("{");
-  
+
   for (TFieldIterator<FProperty> It(Class, EFieldIteratorFlags::IncludeSuper); It; ++It)
   {
     FProperty* Property = *It;
@@ -426,7 +438,7 @@ FString ASynavisDrone::ListObjectPropertiesAsJSON(UObject* Object)
     auto type = Property->GetCPPType();
     OutputString += TEXT(" \"") + name + TEXT("\": \"") + type + TEXT("\"");
     // check if we are at the end of the list
-    if(It->Next)
+    if (It->Next)
     {
       OutputString += TEXT(",");
     }
@@ -437,9 +449,50 @@ FString ASynavisDrone::ListObjectPropertiesAsJSON(UObject* Object)
 void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
 {
   // received a parameter update
-  FString Name = JSON->GetStringField("name");
+  FString Name = JSON->GetStringField("property");
 
-  auto* Property = GetClass()->FindPropertyByName(*Name);
+  USceneComponent* ComponentIdentity = Cast<USceneComponent>(Object);
+  AActor* ActorIdentity = Cast<AActor>(Object);
+  auto* Property = Object->GetClass()->FindPropertyByName(*Name);
+  if (ActorIdentity)
+  {
+    ComponentIdentity = ActorIdentity->GetRootComponent();
+  }
+
+  // Find out whether one of the shortcut properties was updated
+  if (ComponentIdentity)
+  {
+    if (Name == "position")
+    {
+      if (JSON->HasField("x") && JSON->HasField("y") && JSON->HasField("z"))
+      {
+        ComponentIdentity->SetWorldLocation(FVector(JSON->GetNumberField("x"), JSON->GetNumberField("y"), JSON->GetNumberField("z")));
+        return;
+      }
+    }
+    else if (Name == "orientation")
+    {
+      if (JSON->HasField("p") && JSON->HasField("y") && JSON->HasField("r"))
+      {
+        ComponentIdentity->SetWorldRotation(FRotator(JSON->GetNumberField("p"), JSON->GetNumberField("y"), JSON->GetNumberField("r")));
+        return;
+      }
+    }
+    else if (Name == "scale")
+    {
+      if (JSON->HasField("x") && JSON->HasField("y") && JSON->HasField("z"))
+      {
+        ComponentIdentity->SetWorldScale3D(FVector(JSON->GetNumberField("x"), JSON->GetNumberField("y"), JSON->GetNumberField("z")));
+        return;
+      }
+    }
+    else if (Name == "visibility")
+    {
+      if (JSON->HasField("value"))
+        ComponentIdentity->SetVisibility(JSON->GetBoolField("value"));
+      return;
+    }
+  }
   if (Property)
   {
     if (Property->IsA(FIntProperty::StaticClass()))
@@ -479,293 +532,397 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
       }
     }
   }
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Property %s not found"), *Name);
+    SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not found\"}"));
+  }
 }
 
 UObject* ASynavisDrone::GetObjectFromJSON(FJsonObject* JSON)
 {
   FString Name = JSON->GetStringField("object");
+  // divide the name by dots
+  TArray<FString> Parts;
+  Name.ParseIntoArray(Parts, TEXT("."), true);
+
+  // match the first part of the name to the actor
   TArray<AActor*> FoundActors;
   UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), FoundActors);
-  // iterate over all actors
   for (auto* Actor : FoundActors)
   {
-    // check if the actor has the same name as the JSON object
-    if (Actor->GetName() == Name)
+    if (Actor->GetName() == Parts[0])
     {
-      return Actor;
-    }
-  }
-  // if no actor was found, check if the object is a component
-  if (Name.Contains(TEXT(".")))
-  {
-    FString ActorName = Name.Left(Name.Find(TEXT(".")));
-    FString ComponentName = Name.Right(Name.Len() - Name.Find(TEXT(".")) - 1);
-    // iterate over all actors
-    for (auto* Actor : FoundActors)
-    {
-      // check if the actor has the same name as the JSON object
-      if (Actor->GetName() == ActorName)
+      // if there is only one part, return the actor
+      if (Parts.Num() == 1)
       {
-        // iterate over all components
-        for (auto* Component : Actor->GetComponents())
+        return Actor;
+      }
+      // otherwise, remove part and go deeper, descending by component
+      else
+      {
+        UActorComponent* comp = nullptr;
+        Parts.RemoveAt(0);
+        while (Parts.Num() > 0)
         {
-          // check if the component has the same name as the JSON object
-          if (Component->GetName() == ComponentName)
+          for (auto* Component : Actor->GetComponents())
           {
-            return Component;
+            if (Component->GetName() == Parts[0])
+            {
+              comp = Component;
+              break;
+            }
           }
+          Parts.RemoveAt(0);
         }
+        return comp;
       }
     }
   }
   return nullptr;
 }
 
-const bool ASynavisDrone::IsInEditor() const
+FString ASynavisDrone::GetJSONFromObjectProperty(UObject* Object, FString PropertyName)
 {
-#ifdef WITH_EDITOR
-  return true;
-#else
-  return false;
-#endif
-}
-
-// Called when the game starts or when spawned
-void ASynavisDrone::BeginPlay()
-{
-  this->SetActorTickEnabled(false);
-  Super::BeginPlay();
-
-  InfoCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
-  SceneCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
-  SpaceOrigin = Flyspace->GetComponentLocation();
-  SpaceExtend = Flyspace->GetScaledBoxExtent();
-
-  Flyspace->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
-  LoadFromJSON();
-  auto* world = GetWorld();
-  CallibratedPostprocess = UMaterialInstanceDynamic::Create(PostProcessMat, this);
-  InfoCam->AddOrUpdateBlendable(CallibratedPostprocess, 1.f);
-  CallibratedPostprocess->SetScalarParameterValue(TEXT("DistanceScale"), DistanceScale);
-  CallibratedPostprocess->SetScalarParameterValue(TEXT("BlackDistance"), BlackDistance);
-  CallibratedPostprocess->SetScalarParameterValue(TEXT("Mode"), (float)RenderMode);
-  CallibratedPostprocess->SetVectorParameterValue(TEXT("BinScale"), (FLinearColor)BinScale);
-  UE_LOG(LogTemp, Warning, TEXT("L:(%d,%d,%d) - E:(%d,%d,%d)"), SpaceOrigin.X, SpaceOrigin.Y, SpaceOrigin.Z, SpaceExtend.X, SpaceExtend.Y, SpaceExtend.Z);
-  NextLocation = UKismetMathLibrary::RandomPointInBoundingBox(Flyspace->GetComponentLocation(), Flyspace->GetScaledBoxExtent());
-  FrameCaptureCounter = FrameCaptureTime;
-
-  SceneCam->PostProcessSettings.AutoExposureBias = this->AutoExposureBias;
-  if (Rain)
+  USceneComponent* ComponentIdentity = Cast<USceneComponent>(Object);
+  AActor* ActorIdentity = Cast<AActor>(Object);
+  auto* Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+  if (ActorIdentity)
   {
-    ANiagaraActor* RainActor = Cast<ANiagaraActor>(UGameplayStatics::GetActorOfClass(world, ANiagaraActor::StaticClass()));
-    if (RainActor)
+    ComponentIdentity = ActorIdentity->GetRootComponent();
+  }
+  // Find out whether one of the shortcut properties was requested
+  if (ComponentIdentity)
+  {
+    if (PropertyName == "position")
     {
-      RainActor->GetNiagaraComponent()->Activate(true);
-      //RainActor->GetNiagaraComponent()->SetIntParameter(TEXT("SpawnRate"),RainParticlesPerSecond);
-      RainActor->GetNiagaraComponent()->SetNiagaraVariableInt(TEXT("SpawnRate"), RainParticlesPerSecond);
+      FVector Position = ComponentIdentity->GetComponentLocation();
+      return FString::Printf(TEXT("{\"x\":%f,\"y\":%f,\"z\":%f}"), Position.X, Position.Y, Position.Z);
+    }
+    else if (PropertyName == "orientation")
+    {
+      FRotator Orientation = ComponentIdentity->GetComponentRotation();
+      return FString::Printf(TEXT("{\"p\":%f,\"y\":%f,\"r\":%f}"), Orientation.Pitch, Orientation.Yaw, Orientation.Roll);
+    }
+    else if (PropertyName == "scale")
+    {
+      FVector Scale = ComponentIdentity->GetComponentScale();
+      return FString::Printf(TEXT("{\"x\":%f,\"y\":%f,\"z\":%f}"), Scale.X, Scale.Y, Scale.Z);
+    }
+    else if (PropertyName == "visibility")
+    {
+      return FString::Printf(TEXT("{\"value\":%s}"), ComponentIdentity->IsVisible() ? TEXT("true") : TEXT("false"));
     }
   }
-
-  if (MaxFPS > 1)
+  if (Property)
   {
-    APlayerController* PController = UGameplayStatics::GetPlayerController(GetWorld(), 0);
-    if (PController)
+    // find out whether the property is a vector
+    const auto StructProperty = CastField<FStructProperty>(Property);
+    const auto FloatProperty = CastField<FFloatProperty>(Property);
+    const auto IntProperty = CastField<FIntProperty>(Property);
+    const auto BoolProperty = CastField<FBoolProperty>(Property);
+    const auto StringProperty = CastField<FStrProperty>(Property);
+    if (StructProperty)
     {
-      UE_LOG(LogTemp, Warning, TEXT("t.MaxFPS %d"), MaxFPS);
-      PController->ConsoleCommand(*FString::Printf(TEXT("t.MaxFPS %d"), MaxFPS), true);
-    }
-  }
-
-  TArray<AActor*> Found;
-  TArray<USceneComponent*> PlantInstances;
-  UGameplayStatics::GetAllActorsOfClass(world, APawn::StaticClass(), Found);
-  CollisionFilter.AddIgnoredActors(Found);
-  Found.Empty();
-
-  auto* Sun = Cast<ADirectionalLight>(UGameplayStatics::GetActorOfClass(GetWorld(),
-    ADirectionalLight::StaticClass()));
-  auto* Ambient = Cast<ASkyLight>(UGameplayStatics::GetActorOfClass(GetWorld(),
-    ASkyLight::StaticClass()));
-  auto* Clouds = Cast<AVolumetricCloud>(UGameplayStatics::GetActorOfClass(GetWorld(),
-    AVolumetricCloud::StaticClass()));
-  auto* Atmosphere = Cast<ASkyAtmosphere>(UGameplayStatics::GetActorOfClass(GetWorld(),
-    ASkyAtmosphere::StaticClass()));
-
-  if(Sun)
-  {
-    Sun->GetLightComponent()->SetIntensity(DirectionalIntensity);
-    Sun->GetLightComponent()->SetIndirectLightingIntensity(DirectionalIndirectIntensity);
-
-  }
-  if(Ambient)
-  {
-    Ambient->GetLightComponent()->SetIntensity(AmbientIntensity);
-    Ambient->GetLightComponent()->SetVolumetricScatteringIntensity(AmbientVolumeticScattering);
-  }
-
-  UGameplayStatics::GetAllActorsOfClass(world, AInstancedFoliageActor::StaticClass(), Found);
-  CollisionFilter.AddIgnoredActors(Found);
-  for (auto* FoilageActor : Found)
-  {
-    CollisionFilter.AddIgnoredActor(FoilageActor);
-    FoilageActor->GetRootComponent()->GetChildrenComponents(false, PlantInstances);
-    for (auto* PlantInstance : PlantInstances)
-    {
-      UInstancedStaticMeshComponent* RenderMesh = Cast<UInstancedStaticMeshComponent>(PlantInstance);
-      if (RenderMesh)
+      // check if the struct is a vector via the JSON
+      if (StructProperty->Struct->GetFName() == "Vector")
       {
-        RenderMesh->SetRenderCustomDepth(true);
-        RenderMesh->SetCustomDepthStencilValue(1);
-        RenderMesh->SetForcedLodModel(0);
+        auto* VectorValue = StructProperty->ContainerPtrToValuePtr<FVector>(Object);
+        if (VectorValue)
+        {
+          return FString::Printf(TEXT("{\"x\":%f,\"y\":%f,\"z\":%f}"), VectorValue->X, VectorValue->Y, VectorValue->Z);
+        }
       }
     }
-  }
-  if (DistanceToLandscape > 0.f)
-  {
-    auto* landscape = UGameplayStatics::GetActorOfClass(world, ALandscape::StaticClass());
-    if (landscape)
+    else if (FloatProperty)
     {
-      FVector origin, extend;
-      landscape->GetActorBounds(true, origin, extend, true);
-      LowestLandscapeBound = origin.Z - (extend.Z + 100.f);
-      EnsureDistancePreservation();
+      auto* FloatValue = FloatProperty->ContainerPtrToValuePtr<float>(Object);
+      if (FloatValue)
+      {
+        return FString::Printf(TEXT("{\"value\":%f}"), *FloatValue);
+      }
+    }
+    else if (IntProperty)
+    {
+      auto* IntValue = IntProperty->ContainerPtrToValuePtr<int>(Object);
+      if (IntValue)
+      {
+        return FString::Printf(TEXT("{\"value\":%d}"), *IntValue);
+      }
+    }
+    else if (BoolProperty)
+    {
+      auto* BoolValue = BoolProperty->ContainerPtrToValuePtr<bool>(Object);
+      if (BoolValue)
+      {
+        return FString::Printf(TEXT("{\"value\":%s}"), *BoolValue ? TEXT("true") : TEXT("false"));
+      }
+    }
+    else if (StringProperty)
+    {
+      auto* StringValue = StringProperty->ContainerPtrToValuePtr<FString>(Object);
+      if (StringValue)
+      {
+        return FString::Printf(TEXT("{\"value\":\"%s\"}"), **StringValue);
+      }
     }
     else
     {
-      DistanceToLandscape = -1.f;
+      UE_LOG(LogTemp, Warning, TEXT("Property %s not vector, float, bool, or string"), *PropertyName);
+      SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not vector, float, bool, or string\"}"));
+      return TEXT("{}");
     }
   }
-  this->SetActorTickEnabled(true);
+  UE_LOG(LogTemp, Warning, TEXT("Property %s not found"), *PropertyName);
+  SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not found\"}"));
+  return TEXT("{}");
+}
 
-  FQuat q1, q2;
-  auto concatenate_transformat = q1 * q2;
-  auto reverse_second_transform = q1 * (q2.Inverse());
-  auto lerp_const_ang_velo = FQuat::Slerp(q1, q2, 0.5f);
-
-  if (AdjustFocalDistance)
+  const bool ASynavisDrone::IsInEditor() const
   {
-    SceneCam->PostProcessSettings.DepthOfFieldBladeCount = 5;
-    SceneCam->PostProcessSettings.DepthOfFieldDepthBlurAmount = 5.0f;
-    SceneCam->PostProcessSettings.DepthOfFieldDepthBlurRadius = 2.0f;
-    SceneCam->PostProcessSettings.DepthOfFieldFstop = 5.0f;
-    SceneCam->PostProcessSettings.DepthOfFieldMinFstop = 2.0f;
-    InfoCam->PostProcessSettings.DepthOfFieldBladeCount = 5;
-    InfoCam->PostProcessSettings.DepthOfFieldDepthBlurAmount = 5.0f;
-    InfoCam->PostProcessSettings.DepthOfFieldDepthBlurRadius = 2.0f;
-    InfoCam->PostProcessSettings.DepthOfFieldFstop = 5.0f;
-    InfoCam->PostProcessSettings.DepthOfFieldMinFstop = 2.0f;
+#ifdef WITH_EDITOR
+    return true;
+#else
+    return false;
+#endif
   }
 
-
-}
-
-void ASynavisDrone::PostInitializeComponents()
-{
-  Super::PostInitializeComponents();
-  auto* MatInst = UMaterialInstanceDynamic::Create(PostProcessMat, InfoCam);
-  InfoCam->AddOrUpdateBlendable(MatInst);
-}
-
-void ASynavisDrone::EnsureDistancePreservation()
-{
-  TArray<FHitResult> MHits;
-  if (GetWorld()->LineTraceMultiByObjectType(MHits, GetActorLocation(), FVector(GetActorLocation().X, GetActorLocation().Y, LowestLandscapeBound), ActorFilter, CollisionFilter))
+  // Called when the game starts or when spawned
+  void ASynavisDrone::BeginPlay()
   {
-    for (auto Hit : MHits)
+    this->SetActorTickEnabled(false);
+    Super::BeginPlay();
+
+    InfoCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
+    SceneCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
+    SpaceOrigin = Flyspace->GetComponentLocation();
+    SpaceExtend = Flyspace->GetScaledBoxExtent();
+
+    Flyspace->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+    LoadFromJSON();
+    auto* world = GetWorld();
+    CallibratedPostprocess = UMaterialInstanceDynamic::Create(PostProcessMat, this);
+    InfoCam->AddOrUpdateBlendable(CallibratedPostprocess, 1.f);
+    CallibratedPostprocess->SetScalarParameterValue(TEXT("DistanceScale"), DistanceScale);
+    CallibratedPostprocess->SetScalarParameterValue(TEXT("BlackDistance"), BlackDistance);
+    CallibratedPostprocess->SetScalarParameterValue(TEXT("Mode"), (float)RenderMode);
+    CallibratedPostprocess->SetVectorParameterValue(TEXT("BinScale"), (FLinearColor)BinScale);
+    UE_LOG(LogTemp, Warning, TEXT("L:(%d,%d,%d) - E:(%d,%d,%d)"), SpaceOrigin.X, SpaceOrigin.Y, SpaceOrigin.Z, SpaceExtend.X, SpaceExtend.Y, SpaceExtend.Z);
+    NextLocation = UKismetMathLibrary::RandomPointInBoundingBox(Flyspace->GetComponentLocation(), Flyspace->GetScaledBoxExtent());
+    FrameCaptureCounter = FrameCaptureTime;
+
+    SceneCam->PostProcessSettings.AutoExposureBias = this->AutoExposureBias;
+    if (Rain)
     {
-      if (Hit.GetActor()->GetClass() == ALandscape::StaticClass())
+      ANiagaraActor* RainActor = Cast<ANiagaraActor>(UGameplayStatics::GetActorOfClass(world, ANiagaraActor::StaticClass()));
+      if (RainActor)
       {
-        SetActorLocation(FVector(GetActorLocation().X, GetActorLocation().Y, Hit.ImpactPoint.Z + DistanceToLandscape));
+        RainActor->GetNiagaraComponent()->Activate(true);
+        //RainActor->GetNiagaraComponent()->SetIntParameter(TEXT("SpawnRate"),RainParticlesPerSecond);
+        RainActor->GetNiagaraComponent()->SetNiagaraVariableInt(TEXT("SpawnRate"), RainParticlesPerSecond);
+      }
+    }
+
+    if (MaxFPS > 1)
+    {
+      APlayerController* PController = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+      if (PController)
+      {
+        UE_LOG(LogTemp, Warning, TEXT("t.MaxFPS %d"), MaxFPS);
+        PController->ConsoleCommand(*FString::Printf(TEXT("t.MaxFPS %d"), MaxFPS), true);
+      }
+    }
+
+    TArray<AActor*> Found;
+    TArray<USceneComponent*> PlantInstances;
+    UGameplayStatics::GetAllActorsOfClass(world, APawn::StaticClass(), Found);
+    CollisionFilter.AddIgnoredActors(Found);
+    Found.Empty();
+
+    auto* Sun = Cast<ADirectionalLight>(UGameplayStatics::GetActorOfClass(GetWorld(),
+      ADirectionalLight::StaticClass()));
+    auto* Ambient = Cast<ASkyLight>(UGameplayStatics::GetActorOfClass(GetWorld(),
+      ASkyLight::StaticClass()));
+    auto* Clouds = Cast<AVolumetricCloud>(UGameplayStatics::GetActorOfClass(GetWorld(),
+      AVolumetricCloud::StaticClass()));
+    auto* Atmosphere = Cast<ASkyAtmosphere>(UGameplayStatics::GetActorOfClass(GetWorld(),
+      ASkyAtmosphere::StaticClass()));
+
+    if (Sun)
+    {
+      Sun->GetLightComponent()->SetIntensity(DirectionalIntensity);
+      Sun->GetLightComponent()->SetIndirectLightingIntensity(DirectionalIndirectIntensity);
+
+    }
+    if (Ambient)
+    {
+      Ambient->GetLightComponent()->SetIntensity(AmbientIntensity);
+      Ambient->GetLightComponent()->SetVolumetricScatteringIntensity(AmbientVolumeticScattering);
+    }
+
+    UGameplayStatics::GetAllActorsOfClass(world, AInstancedFoliageActor::StaticClass(), Found);
+    CollisionFilter.AddIgnoredActors(Found);
+    for (auto* FoilageActor : Found)
+    {
+      CollisionFilter.AddIgnoredActor(FoilageActor);
+      FoilageActor->GetRootComponent()->GetChildrenComponents(false, PlantInstances);
+      for (auto* PlantInstance : PlantInstances)
+      {
+        UInstancedStaticMeshComponent* RenderMesh = Cast<UInstancedStaticMeshComponent>(PlantInstance);
+        if (RenderMesh)
+        {
+          RenderMesh->SetRenderCustomDepth(true);
+          RenderMesh->SetCustomDepthStencilValue(1);
+          RenderMesh->SetForcedLodModel(0);
+        }
+      }
+    }
+    if (DistanceToLandscape > 0.f)
+    {
+      auto* landscape = UGameplayStatics::GetActorOfClass(world, ALandscape::StaticClass());
+      if (landscape)
+      {
+        FVector origin, extend;
+        landscape->GetActorBounds(true, origin, extend, true);
+        LowestLandscapeBound = origin.Z - (extend.Z + 100.f);
+        EnsureDistancePreservation();
+      }
+      else
+      {
+        DistanceToLandscape = -1.f;
+      }
+    }
+    this->SetActorTickEnabled(true);
+
+    FQuat q1, q2;
+    auto concatenate_transformat = q1 * q2;
+    auto reverse_second_transform = q1 * (q2.Inverse());
+    auto lerp_const_ang_velo = FQuat::Slerp(q1, q2, 0.5f);
+
+    if (AdjustFocalDistance)
+    {
+      SceneCam->PostProcessSettings.DepthOfFieldBladeCount = 5;
+      SceneCam->PostProcessSettings.DepthOfFieldDepthBlurAmount = 5.0f;
+      SceneCam->PostProcessSettings.DepthOfFieldDepthBlurRadius = 2.0f;
+      SceneCam->PostProcessSettings.DepthOfFieldFstop = 5.0f;
+      SceneCam->PostProcessSettings.DepthOfFieldMinFstop = 2.0f;
+      InfoCam->PostProcessSettings.DepthOfFieldBladeCount = 5;
+      InfoCam->PostProcessSettings.DepthOfFieldDepthBlurAmount = 5.0f;
+      InfoCam->PostProcessSettings.DepthOfFieldDepthBlurRadius = 2.0f;
+      InfoCam->PostProcessSettings.DepthOfFieldFstop = 5.0f;
+      InfoCam->PostProcessSettings.DepthOfFieldMinFstop = 2.0f;
+    }
+
+
+  }
+
+  void ASynavisDrone::PostInitializeComponents()
+  {
+    Super::PostInitializeComponents();
+    auto* MatInst = UMaterialInstanceDynamic::Create(PostProcessMat, InfoCam);
+    InfoCam->AddOrUpdateBlendable(MatInst);
+  }
+
+  void ASynavisDrone::EnsureDistancePreservation()
+  {
+    TArray<FHitResult> MHits;
+    if (GetWorld()->LineTraceMultiByObjectType(MHits, GetActorLocation(), FVector(GetActorLocation().X, GetActorLocation().Y, LowestLandscapeBound), ActorFilter, CollisionFilter))
+    {
+      for (auto Hit : MHits)
+      {
+        if (Hit.GetActor()->GetClass() == ALandscape::StaticClass())
+        {
+          SetActorLocation(FVector(GetActorLocation().X, GetActorLocation().Y, Hit.ImpactPoint.Z + DistanceToLandscape));
+        }
       }
     }
   }
-}
 
-void ASynavisDrone::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-}
+  void ASynavisDrone::EndPlay(const EEndPlayReason::Type EndPlayReason)
+  {
+  }
 
-// Called every frame
-void ASynavisDrone::Tick(float DeltaTime)
-{
-  Super::Tick(DeltaTime);
-  UGameplayStatics::GetPlayerPawn(GetWorld(), 0)->SetActorLocation(GetActorLocation());
-  FrameCaptureCounter -= DeltaTime;
-  FVector Distance = NextLocation - GetActorLocation();
-  if (DistanceToLandscape > 0.f)
+  // Called every frame
+  void ASynavisDrone::Tick(float DeltaTime)
   {
-    Distance.Z = 0;
-  }
-  if (FGenericPlatformMath::Abs((Distance).Size()) < 50.f)
-  {
-    NextLocation = UKismetMathLibrary::RandomPointInBoundingBox(Flyspace->GetComponentLocation(), Flyspace->GetScaledBoxExtent());
-    if (GEngine && PrintScreenNewPosition)
-    {
-      GEngine->AddOnScreenDebugMessage(10, 30.f, FColor::Red, FString::Printf(
-        TEXT("L:(%d,%d,%d) - N:(%d,%d,%d) - M:%d/%d"), \
-        GetActorLocation().X, GetActorLocation().Y, GetActorLocation().Z, \
-        NextLocation.X, NextLocation.Y, NextLocation.Z, MeanVelocityLength, FGenericPlatformMath::Abs((GetActorLocation() - NextLocation).Size())));
-    }
-  }
-  else
-  {
-    xprogress += DeltaTime;
-    if (xprogress > 10000.f)
-      xprogress = 0;
-    FVector Noise = { FGenericPlatformMath::Sin(xprogress * CircleSpeed),FGenericPlatformMath::Cos(xprogress * CircleSpeed),-FGenericPlatformMath::Sin(xprogress * CircleSpeed) };
-    Noise = (Noise / Noise.Size()) * CircleStrength;
-    Distance = Distance / Distance.Size();
-    Velocity = (Velocity * TurnWeight) + (Distance * (1.f - TurnWeight)) + Noise;
-    Velocity = Velocity / Velocity.Size();
-    SetActorLocation(GetActorLocation() + (Velocity * DeltaTime * MaxVelocity));
-    if (!EditorOrientedCamera)
-      SetActorRotation(Velocity.ToOrientationRotator());
+    Super::Tick(DeltaTime);
+    UGameplayStatics::GetPlayerPawn(GetWorld(), 0)->SetActorLocation(GetActorLocation());
+    FrameCaptureCounter -= DeltaTime;
+    FVector Distance = NextLocation - GetActorLocation();
     if (DistanceToLandscape > 0.f)
     {
-      EnsureDistancePreservation();
+      Distance.Z = 0;
     }
+    if (FGenericPlatformMath::Abs((Distance).Size()) < 50.f)
+    {
+      NextLocation = UKismetMathLibrary::RandomPointInBoundingBox(Flyspace->GetComponentLocation(), Flyspace->GetScaledBoxExtent());
+      if (GEngine && PrintScreenNewPosition)
+      {
+        GEngine->AddOnScreenDebugMessage(10, 30.f, FColor::Red, FString::Printf(
+          TEXT("L:(%d,%d,%d) - N:(%d,%d,%d) - M:%d/%d"), \
+          GetActorLocation().X, GetActorLocation().Y, GetActorLocation().Z, \
+          NextLocation.X, NextLocation.Y, NextLocation.Z, MeanVelocityLength, FGenericPlatformMath::Abs((GetActorLocation() - NextLocation).Size())));
+      }
+    }
+    else
+    {
+      xprogress += DeltaTime;
+      if (xprogress > 10000.f)
+        xprogress = 0;
+      FVector Noise = { FGenericPlatformMath::Sin(xprogress * CircleSpeed),FGenericPlatformMath::Cos(xprogress * CircleSpeed),-FGenericPlatformMath::Sin(xprogress * CircleSpeed) };
+      Noise = (Noise / Noise.Size()) * CircleStrength;
+      Distance = Distance / Distance.Size();
+      Velocity = (Velocity * TurnWeight) + (Distance * (1.f - TurnWeight)) + Noise;
+      Velocity = Velocity / Velocity.Size();
+      SetActorLocation(GetActorLocation() + (Velocity * DeltaTime * MaxVelocity));
+      if (!EditorOrientedCamera)
+        SetActorRotation(Velocity.ToOrientationRotator());
+      if (DistanceToLandscape > 0.f)
+      {
+        EnsureDistancePreservation();
+      }
+    }
+    FHitResult Hit;
+    if (GetWorld()->LineTraceSingleByObjectType(Hit, GetActorLocation(), GetActorLocation() + GetActorForwardVector() * 2000.f, ParamsObject, ParamsTrace))
+    {
+      TargetFocalLength = FGenericPlatformMath::Min(2000.f, FGenericPlatformMath::Max(0.f, Hit.Distance));
+    }
+    else
+    {
+      TargetFocalLength = 2000.f;
+    }
+    if (FGenericPlatformMath::Abs(TargetFocalLength - FocalLength) > 0.1f)
+    {
+      FocalLength = (TargetFocalLength - FocalLength) * FocalRate * DeltaTime;
+      SceneCam->PostProcessSettings.DepthOfFieldFocalDistance = FocalLength;
+      InfoCam->PostProcessSettings.DepthOfFieldFocalDistance = FocalLength;
+    }
+
+    // prepare texture for storage
+    if (FrameCaptureTime > 0.f && FrameCaptureCounter <= 0.f)
+    {
+      auto* irtarget = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
+      auto* srtarget = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
+
+      TPair<TArray<FColor>, TArray<FColor>> Data;
+
+      FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
+      ReadPixelFlags.SetLinearToGamma(true);
+      srtarget->ReadPixels(Data.Value, ReadPixelFlags);
+      irtarget->ReadPixels(Data.Key, ReadPixelFlags);
+
+      FBase64 Base64;
+
+      TArray<uint8> DataAsBytes(reinterpret_cast<uint8*>(Data.Key.GetData()), Data.Key.Num() * sizeof(FColor));
+
+      FString Base64String = Base64.Encode(DataAsBytes);
+
+
+
+      FrameCaptureCounter = FrameCaptureTime;
+      //UE_LOG(LogTemp, Display, TEXT("Setting Frame back to %f"),FrameCaptureTime);
+    }
+
   }
-  FHitResult Hit;
-  if (GetWorld()->LineTraceSingleByObjectType(Hit, GetActorLocation(), GetActorLocation() + GetActorForwardVector() * 2000.f, ParamsObject, ParamsTrace))
-  {
-    TargetFocalLength = FGenericPlatformMath::Min(2000.f, FGenericPlatformMath::Max(0.f, Hit.Distance));
-  }
-  else
-  {
-    TargetFocalLength = 2000.f;
-  }
-  if (FGenericPlatformMath::Abs(TargetFocalLength - FocalLength) > 0.1f)
-  {
-    FocalLength = (TargetFocalLength - FocalLength) * FocalRate * DeltaTime;
-    SceneCam->PostProcessSettings.DepthOfFieldFocalDistance = FocalLength;
-    InfoCam->PostProcessSettings.DepthOfFieldFocalDistance = FocalLength;
-  }
-
-  // prepare texture for storage
-  if (FrameCaptureTime > 0.f && FrameCaptureCounter <= 0.f)
-  {
-    auto* irtarget = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
-    auto* srtarget = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
-
-    TPair<TArray<FColor>, TArray<FColor>> Data;
-
-    FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
-    ReadPixelFlags.SetLinearToGamma(true);
-    srtarget->ReadPixels(Data.Value, ReadPixelFlags);
-    irtarget->ReadPixels(Data.Key, ReadPixelFlags);
-
-    FBase64 Base64;
-
-    TArray<uint8> DataAsBytes(reinterpret_cast<uint8*>(Data.Key.GetData()), Data.Key.Num() * sizeof(FColor));
-
-    FString Base64String = Base64.Encode(DataAsBytes);
-
-
-
-    FrameCaptureCounter = FrameCaptureTime;
-    //UE_LOG(LogTemp, Display, TEXT("Setting Frame back to %f"),FrameCaptureTime);
-  }
-
-}
 
 

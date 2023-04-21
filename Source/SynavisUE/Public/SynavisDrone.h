@@ -95,6 +95,8 @@ public:
 	
   UObject* GetObjectFromJSON(FJsonObject *JSON);
 
+	FString GetJSONFromObjectProperty(UObject* Object, FString PropertyName);
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Actor")
 		USceneComponent* CoordinateSource;
 
