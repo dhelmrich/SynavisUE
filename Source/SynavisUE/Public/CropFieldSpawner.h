@@ -7,7 +7,14 @@
 #include "CropFieldSpawner.generated.h"
 
 
+USTRUCT(BlueprintType)
+struct FObjectSpawnInstance
+{
+  
+};
+
 class UProceduralMeshComponent;
+
 UCLASS()
 class SYNAVISUE_API ACropFieldSpawner : public AActor
 {
@@ -24,6 +31,17 @@ public:
   class UPrimitiveComponent* CropField;
 
 	TArray<USceneComponent*> SubComponents;
+
+	// a function that returns a StaticClass from a name
+	UClass* GetClassFromName(FString ClassName);
+
+	UTexture2D* CreateTexture2DFromData(TArray<uint8> Data, int Width, int Height);
+	UDynamicMaterialInstance* GenerateInstanceFromName(FString InstanceName);
+
+	UPROPERTY(EditAnywhere, Category = "Field")
+    TMap<FString, UDynamicMaterialInstance*> MaterialInstances;
+
+
 
 protected:
 	// Called when the game starts or when spawned
