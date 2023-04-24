@@ -246,17 +246,17 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         if (Jason->HasField("frametime"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
-          OnPixelStreamingResponse.Broadcast(Response);
+         SendResponse(Response);
         }
         else if (Jason->HasField("memory"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
-          OnPixelStreamingResponse.Broadcast(Response);
+         SendResponse(Response);
         }
         else if (Jason->HasField("fps"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
-          OnPixelStreamingResponse.Broadcast(Response);
+         SendResponse(Response);
         }
         else if (Jason->HasField("object"))
         {
