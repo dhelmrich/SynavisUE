@@ -27,6 +27,7 @@ class UCameraComponent;
 class USceneCaptureComponent2D;
 class UBoxComponent;
 class UTextureRenderTarget2D;
+class AWorldSpawner;
 
 
 UENUM(BlueprintType)
@@ -77,9 +78,11 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Network")
   void SendResponse(FString Message);
 
+  UFUNCTION(BlueprintCallable, Category = "Network")
+  void SendError(FString Message);
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
 		USceneCaptureComponent2D* InfoCam;
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
 		USceneCaptureComponent2D* SceneCam;
 
@@ -202,6 +205,8 @@ protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 	virtual void PostInitializeComponents() override;
+
+	AWorldSpawner* WorldSpawner;
 
 	FVector NextLocation;
 	FVector Velocity;
