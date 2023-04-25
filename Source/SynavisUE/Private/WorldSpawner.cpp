@@ -257,6 +257,7 @@ TArray<FString> AWorldSpawner::GetNamesOfSpawnableTypes()
 
 void AWorldSpawner::ReceiveStreamingCommunicatorRef()
 {
+  decltype(StreamableHandles) HandlesToRelease;
   // Go through present streaming handles
   for(auto & StreamingHandle : StreamableHandles)
   {
@@ -267,9 +268,13 @@ void AWorldSpawner::ReceiveStreamingCommunicatorRef()
       auto asset = StreamingHandle->GetLoadedAsset();
       GetWorld()->SpawnActor<AActor>(asset->GetClass());
       MessageToClient(FString::Printf(TEXT("{\"type\":\"spawned\",\"name\":\"%s\"}"), *asset->GetName()));
-      StreamableHandles.Remove(StreamingHandle);
+      HandlesToRelease.Add(StreamingHandle);
     }
   }
+  StreamableHandles.RemoveAll([&HandlesToRelease](const TSharedPtr<FStreamableHandle>& Handle)
+  {
+     return HandlesToRelease.Contains(Handle);
+  });
 }
 
 

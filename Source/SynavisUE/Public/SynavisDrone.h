@@ -48,6 +48,27 @@ enum class EBlueprintSignalling : uint8
 	SwitchToInfoCam,
 	SwitchToBothCams,
 };
+UENUM(BlueprintType)
+enum class EDataTypeIndicator : uint8
+{
+  Float = 0,
+	Int,
+	Bool,
+	String,
+	Vector,
+	Rotator,
+	None
+};
+
+USTRUCT(BlueprintType)
+struct FTransmissionTarget
+{
+  GENERATED_BODY()
+	UObject* Object;
+	FProperty *Property;
+	EDataTypeIndicator DataType;
+	FString Name;
+};
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBlueprintSignallingCallback, EBlueprintSignalling, Signal);
 
@@ -201,10 +222,14 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "View")
 	  float CurrentDivider = 10000.f;
 
+	UPROPERTY()
+	TArray<FTransmissionTarget> TransmissionTargets;
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 	virtual void PostInitializeComponents() override;
+	EDataTypeIndicator FindType(FProperty* Property);
 
 	AWorldSpawner* WorldSpawner;
 

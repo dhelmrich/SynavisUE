@@ -156,23 +156,22 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       {
         if (!Jason->HasField("object"))
         {
-          if(Jason->HasField("spawn"))
+          if (Jason->HasField("spawn"))
           {
             FString spawn = Jason->GetStringField("spawn");
-            if(WorldSpawner)
+            if (WorldSpawner)
             {
               auto cache = WorldSpawner->GetAssetCacheTemp();
-              
-              if(spawn == "any")
+
+              if (spawn == "any")
               {
                 // return names of all available assets
                 FString message = "{\"type\":\"query\",\"name\":\"spawn\",\"data\":[";
-                TArray<FString> Keys;
-                int num_keys = cache->Values.GetKeys(Keys);
-                for(int i = 0; i < num_keys; ++i)
+                TArray<FString> Names = WorldSpawner->GetNamesOfSpawnableTypes();
+                for (int i = 0; i < Names.Num(); ++i)
                 {
-                  message += FString::Printf(TEXT("\"%s\""), (*Keys[i]));
-                  if(i < num_keys - 1)
+                  message += FString::Printf(TEXT("\"%s\""), (*Names[i]));
+                  if (i < Names.Num() - 1)
                     message += TEXT(",");
                 }
                 message += "]}";
@@ -181,7 +180,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
               else
               {
                 // we are still in query mode, so this must mean that spawn parameters should be listed
-                if(cache->HasField(spawn))
+                if (cache->HasField(spawn))
                 {
                   auto asset_json = cache->GetObjectField(spawn);
                   // the asset json already contains all info
@@ -223,6 +222,71 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           }
         }
       }
+      else if (type == "track")
+      {
+        // this is a request to track a property
+        // we need values "object" and "property"
+        if (!Jason->HasField("object") || !Jason->HasField("property"))
+        {
+          SendError("track request needs object and property fields");
+          UE_LOG(LogTemp, Error, TEXT("track request needs object and property fields"))
+        }
+        else
+        {
+          FString ObjectName = Jason->GetStringField("object");
+          FString PropertyName = Jason->GetStringField("property");
+          auto Object = this->GetObjectFromJSON(Jason.Get());
+          if (!Object)
+          {
+            SendError("track request object not found");
+            return;
+          }
+          auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+
+          if (!Property)
+          {
+            SendError("track request Property not found");
+            return;
+          }
+          this->TransmissionTargets.Add({ Object, Property, this->FindType(Property),
+            FString::Printf(TEXT("%s.%s"),*ObjectName,*PropertyName)});
+        }
+      }
+      else if (type == "untrack")
+      {
+        // this is a request to untrack a property
+        // we need values "object" and "property"
+        if (!Jason->HasField("object") || !Jason->HasField("property"))
+        {
+          SendError("untrack request needs object and property fields");
+          UE_LOG(LogTemp, Error, TEXT("untrack request needs object and property fields"))
+        }
+        else
+        {
+          FString ObjectName = Jason->GetStringField("object");
+          FString PropertyName = Jason->GetStringField("property");
+          auto Object = this->GetObjectFromJSON(Jason.Get());
+          if (!Object)
+          {
+            SendError("untrack request object not found");
+            return;
+          }
+          auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+          if (!Property)
+          {
+            SendError("untrack request Property not found");
+            return;
+          }
+          for (int i = 0; i < this->TransmissionTargets.Num(); ++i)
+          {
+            if (this->TransmissionTargets[i].Object == Object && this->TransmissionTargets[i].Property == Property)
+            {
+              this->TransmissionTargets.RemoveAt(i);
+              break;
+            }
+          }
+        }
+      }
       else if (type == "command")
       {
         // received a command
@@ -246,17 +310,17 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         if (Jason->HasField("frametime"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
-         SendResponse(Response);
+          SendResponse(Response);
         }
         else if (Jason->HasField("memory"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
-         SendResponse(Response);
+          SendResponse(Response);
         }
         else if (Jason->HasField("fps"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
-         SendResponse(Response);
+          SendResponse(Response);
         }
         else if (Jason->HasField("object"))
         {
@@ -556,8 +620,8 @@ UObject* ASynavisDrone::GetObjectFromJSON(FJsonObject* JSON)
     if (Actor->GetName() == Name)
     {
       return Actor;
-    }
   }
+}
   // if no actor was found, check if the object is a component
   if (Name.Contains(TEXT(".")))
   {
@@ -709,7 +773,7 @@ void ASynavisDrone::BeginPlay()
     InfoCam->PostProcessSettings.DepthOfFieldFstop = 5.0f;
     InfoCam->PostProcessSettings.DepthOfFieldMinFstop = 2.0f;
   }
-  
+
   this->WorldSpawner = Cast<AWorldSpawner>(UGameplayStatics::GetActorOfClass(world, AWorldSpawner::StaticClass()));
 }
 
@@ -718,6 +782,40 @@ void ASynavisDrone::PostInitializeComponents()
   Super::PostInitializeComponents();
   auto* MatInst = UMaterialInstanceDynamic::Create(PostProcessMat, InfoCam);
   InfoCam->AddOrUpdateBlendable(MatInst);
+}
+
+EDataTypeIndicator ASynavisDrone::FindType(FProperty* Property)
+{
+  if (Property->IsA(FFloatProperty::StaticClass()))
+  {
+    return EDataTypeIndicator::Float;
+  }
+  else if (Property->IsA(FIntProperty::StaticClass()))
+  {
+    return EDataTypeIndicator::Int;
+  }
+  else if (Property->IsA(FBoolProperty::StaticClass()))
+  {
+    return EDataTypeIndicator::Bool;
+  }
+  else if (Property->IsA(FStrProperty::StaticClass()))
+  {
+    return EDataTypeIndicator::String;
+  }
+  else if (Property->IsA(FStructProperty::StaticClass()))
+  {
+    FVector* Vector = Property->ContainerPtrToValuePtr<FVector>(this);
+    FRotator* Rotator = Property->ContainerPtrToValuePtr<FRotator>(this);
+    if (Vector)
+    {
+      return EDataTypeIndicator::Vector;
+    }
+    else if (Rotator)
+    {
+      return EDataTypeIndicator::Rotator;
+    }
+  }
+  return EDataTypeIndicator::None;
 }
 
 void ASynavisDrone::EnsureDistancePreservation()
@@ -793,6 +891,44 @@ void ASynavisDrone::Tick(float DeltaTime)
     FocalLength = (TargetFocalLength - FocalLength) * FocalRate * DeltaTime;
     SceneCam->PostProcessSettings.DepthOfFieldFocalDistance = FocalLength;
     InfoCam->PostProcessSettings.DepthOfFieldFocalDistance = FocalLength;
+  }
+  if (TransmissionTargets.Num() > 0)
+  {
+    FString Data = TEXT("{\"type\":\"track\",\"data\":{");
+
+    for (auto i = 0; i < TransmissionTargets.Num(); ++i)
+    {
+      auto& Target = TransmissionTargets[i];
+      if (IsValid(Target.Object))
+      {
+        Data.Append(FString::Printf(TEXT("\"%s\":"), *Target.Name));
+        // read the property
+        switch (Target.DataType)
+        {
+        case EDataTypeIndicator::Float:
+            Data.Append(FString::Printf(TEXT("%f"), Target.Property->ContainerPtrToValuePtr<float>(Target.Object)));
+            break;
+          case EDataTypeIndicator::Int:
+            Data.Append(FString::Printf(TEXT("%d"), Target.Property->ContainerPtrToValuePtr<int>(Target.Object)));
+            break;
+          case EDataTypeIndicator::Bool:
+            Data.Append(FString::Printf(TEXT("%s"), Target.Property->ContainerPtrToValuePtr<bool>(Target.Object) ? TEXT("true") : TEXT("false")));
+            break;
+          case EDataTypeIndicator::String:
+            Data.Append(FString::Printf(TEXT("\"%s\""), **Target.Property->ContainerPtrToValuePtr<FString>(Target.Object)));
+            break;
+          case EDataTypeIndicator::Vector:
+            Data.Append(FString::Printf(TEXT("[%f,%f,%f]"), Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->X, Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->Y, Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->Z));
+            break;
+          case EDataTypeIndicator::Rotator:
+            Data.Append(FString::Printf(TEXT("[%f,%f,%f]"), Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Pitch, Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Yaw, Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Roll));
+            break;
+        }
+        if(i < TransmissionTargets.Num() - 1)
+          Data.Append(TEXT(","));
+      }
+    }
+    Data.Append(TEXT("}}"));
   }
 
   // prepare texture for storage
