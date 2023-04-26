@@ -63,7 +63,7 @@ public:
 	// The description must contain a "ClassName" field that contains the name of the class to spawn
 	// The description must adhere with the internal spawn parameter map
 	// @return The name of the spawned object, this should also just appear in the scene.
-	FString SpawnObject(const FJsonObject& Description);
+	FString SpawnObject(TSharedPtr<FJsonObject> Description);
 
 	//UPROPERTY(EditAnywhere, Category = "Field")
   TMap<FString, UDynamicMaterialInstance*> MaterialInstances;

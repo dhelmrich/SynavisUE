@@ -57,8 +57,30 @@ enum class EDataTypeIndicator : uint8
 	String,
 	Vector,
 	Rotator,
+	Transform,
 	None
 };
+
+static inline FString PrintFormattedTransform(UObject* Object)
+{
+	USceneComponent* ComponentIdentity = Cast<USceneComponent>(Object);
+	AActor* ActorIdentity = Cast<AActor>(Object);
+	if(ActorIdentity)
+	{
+	  ComponentIdentity = ActorIdentity->GetRootComponent();
+	}
+	if(!ComponentIdentity)
+	{
+	  return FString("");
+	}
+	else
+	{
+	  const FTransform& Transform = ComponentIdentity->GetComponentTransform();
+		return FString::Printf(TEXT("L{%s}R{%s}S{%s}"), *Transform.GetLocation().ToString(), *Transform.GetRotation().ToString(), *Transform.GetScale3D().ToString());
+
+	}
+   
+}
 
 USTRUCT(BlueprintType)
 struct FTransmissionTarget
@@ -101,6 +123,9 @@ public:
 
   UFUNCTION(BlueprintCallable, Category = "Network")
   void SendError(FString Message);
+
+	UFUNCTION(BlueprintCallable, Category = "Network")
+		void ResetSynavisState();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
 		USceneCaptureComponent2D* InfoCam;

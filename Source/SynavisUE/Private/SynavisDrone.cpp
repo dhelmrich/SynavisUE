@@ -241,15 +241,37 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             SendError("track request object not found");
             return;
           }
-          auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
 
-          if (!Property)
+          // check if we are already tracking this property
+          if (this->TransmissionTargets.ContainsByPredicate([Object, PropertyName](const FTransmissionTarget& Target)
           {
-            SendError("track request Property not found");
+            return Target.Object == Object && Target.Property->GetName() == PropertyName;
+          }))
+          {
+            SendError("track request already tracking this property");
             return;
           }
-          this->TransmissionTargets.Add({ Object, Property, this->FindType(Property),
-            FString::Printf(TEXT("%s.%s"),*ObjectName,*PropertyName)});
+
+          // check if the property is one of the shortcut properties
+          if (PropertyName == "Position" || PropertyName == "Rotation" || PropertyName == "Scale" || PropertyName == "Transform")
+          {
+            // there is no property to track, but we need to add a transmission target
+            TransmissionTargets.Add({ Object, nullptr, EDataTypeIndicator::Transform, FString::Printf(TEXT("%s.%s"), *ObjectName, *PropertyName) });
+          }
+          else
+          {
+
+            auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+
+            if (!Property)
+            {
+              SendError("track request Property not found");
+              return;
+            }
+
+            this->TransmissionTargets.Add({ Object, Property, this->FindType(Property),
+              FString::Printf(TEXT("%s.%s"),*ObjectName,*PropertyName) });
+          }
         }
       }
       else if (type == "untrack")
@@ -354,7 +376,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       {
         if (this->WorldSpawner)
         {
-          auto name = this->WorldSpawner->SpawnObject(*Jason.Get());
+          auto name = this->WorldSpawner->SpawnObject(Jason);
           SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name));
         }
         else
@@ -401,6 +423,11 @@ void ASynavisDrone::SendError(FString Message)
 {
   FString Response = FString::Printf(TEXT("{\"type\":\"error\",\"message\":%s}"), *Message);
   SendResponse(Response);
+}
+
+void ASynavisDrone::ResetSynavisState()
+{
+  TransmissionTargets.Empty();
 }
 
 
@@ -620,8 +647,8 @@ UObject* ASynavisDrone::GetObjectFromJSON(FJsonObject* JSON)
     if (Actor->GetName() == Name)
     {
       return Actor;
+    }
   }
-}
   // if no actor was found, check if the object is a component
   if (Name.Contains(TEXT(".")))
   {
@@ -786,6 +813,10 @@ void ASynavisDrone::PostInitializeComponents()
 
 EDataTypeIndicator ASynavisDrone::FindType(FProperty* Property)
 {
+  if (!Property)
+  {
+    return EDataTypeIndicator::Transform;
+  }
   if (Property->IsA(FFloatProperty::StaticClass()))
   {
     return EDataTypeIndicator::Float;
@@ -804,15 +835,17 @@ EDataTypeIndicator ASynavisDrone::FindType(FProperty* Property)
   }
   else if (Property->IsA(FStructProperty::StaticClass()))
   {
-    FVector* Vector = Property->ContainerPtrToValuePtr<FVector>(this);
-    FRotator* Rotator = Property->ContainerPtrToValuePtr<FRotator>(this);
-    if (Vector)
+    if (Property->ContainerPtrToValuePtr<FVector>(this))
     {
       return EDataTypeIndicator::Vector;
     }
-    else if (Rotator)
+    else if (Property->ContainerPtrToValuePtr<FRotator>(this))
     {
       return EDataTypeIndicator::Rotator;
+    }
+    else if (Property->ContainerPtrToValuePtr<FTransform>(this))
+    {
+      return EDataTypeIndicator::Transform;
     }
   }
   return EDataTypeIndicator::None;
@@ -906,29 +939,33 @@ void ASynavisDrone::Tick(float DeltaTime)
         switch (Target.DataType)
         {
         case EDataTypeIndicator::Float:
-            Data.Append(FString::Printf(TEXT("%f"), Target.Property->ContainerPtrToValuePtr<float>(Target.Object)));
-            break;
-          case EDataTypeIndicator::Int:
-            Data.Append(FString::Printf(TEXT("%d"), Target.Property->ContainerPtrToValuePtr<int>(Target.Object)));
-            break;
-          case EDataTypeIndicator::Bool:
-            Data.Append(FString::Printf(TEXT("%s"), Target.Property->ContainerPtrToValuePtr<bool>(Target.Object) ? TEXT("true") : TEXT("false")));
-            break;
-          case EDataTypeIndicator::String:
-            Data.Append(FString::Printf(TEXT("\"%s\""), **Target.Property->ContainerPtrToValuePtr<FString>(Target.Object)));
-            break;
-          case EDataTypeIndicator::Vector:
-            Data.Append(FString::Printf(TEXT("[%f,%f,%f]"), Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->X, Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->Y, Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->Z));
-            break;
+          Data.Append(FString::Printf(TEXT("%f"), Target.Property->ContainerPtrToValuePtr<float>(Target.Object)));
+          break;
+        case EDataTypeIndicator::Int:
+          Data.Append(FString::Printf(TEXT("%d"), Target.Property->ContainerPtrToValuePtr<int>(Target.Object)));
+          break;
+        case EDataTypeIndicator::Bool:
+          Data.Append(FString::Printf(TEXT("%s"), Target.Property->ContainerPtrToValuePtr<bool>(Target.Object) ? TEXT("true") : TEXT("false")));
+          break;
+        case EDataTypeIndicator::String:
+          Data.Append(FString::Printf(TEXT("\"%s\""), **Target.Property->ContainerPtrToValuePtr<FString>(Target.Object)));
+          break;
+        case EDataTypeIndicator::Transform:
+          Data.Append(PrintFormattedTransform(Target.Object));
+          break;
+        case EDataTypeIndicator::Vector:
+          Data.Append(FString::Printf(TEXT("[%f,%f,%f]"), Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->X, Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->Y, Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->Z));
+          break;
           case EDataTypeIndicator::Rotator:
             Data.Append(FString::Printf(TEXT("[%f,%f,%f]"), Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Pitch, Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Yaw, Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Roll));
             break;
         }
-        if(i < TransmissionTargets.Num() - 1)
+        if (i < TransmissionTargets.Num() - 1)
           Data.Append(TEXT(","));
       }
     }
     Data.Append(TEXT("}}"));
+    SendResponse(Data);
   }
 
   // prepare texture for storage

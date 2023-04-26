@@ -305,10 +305,10 @@ UDynamicMaterialInstance* AWorldSpawner::GenerateInstanceFromName(FString Instan
   return nullptr;
 }
 
-FString AWorldSpawner::SpawnObject(const FJsonObject& Description)
+FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
 {
   FString ObjectName;
-  if (Description.TryGetStringField("object", ObjectName))
+  if (Description->TryGetStringField("object", ObjectName))
   {
     // check if the object is in the asset cache
     if (AssetCache->HasField(ObjectName))
@@ -333,6 +333,10 @@ FString AWorldSpawner::SpawnObject(const FJsonObject& Description)
       {
         UE_LOG(LogTemp, Error, TEXT("Failed to spawn actor of class %s"), *ObjectName);
         return "";
+      }
+      if(Description->HasField("parameters"))
+      {
+        auto parameters = Description->GetObjectField("parameters");
       }
       return Actor->GetName();
     }
