@@ -51,6 +51,13 @@ public:
 	UFUNCTION()
 	void ReceiveStreamingCommunicatorRef();
 
+	FString PrepareContainerGeometry(TSharedPtr<FJsonObject> Description);
+
+	UFUNCTION()
+	AActor* GetHeldActor(){return this->HeldActor;}
+	UFUNCTION()
+	USceneComponent* GetHeldComponent() { return this->HeldComponent; }
+
 	TArray<USceneComponent*> SubComponents;
 
 	// a function that returns a StaticClass from a name
@@ -79,12 +86,12 @@ protected:
   ASynavisDrone* DroneRef;
 	void MessageToClient(FString Message);
 
-	TMap<FName, FTopLevelAssetPath> MeshAssetCache;
-	TMap<FName, FTopLevelAssetPath> MaterialAssetPathCache;
-
 	TSharedPtr<FJsonObject> AssetCache;
 
 	TArray<TSharedPtr<FStreamableHandle>> StreamableHandles;
+
+	AActor* HeldActor;
+	USceneComponent* HeldComponent;
 
 public:	
 	// Called every frame

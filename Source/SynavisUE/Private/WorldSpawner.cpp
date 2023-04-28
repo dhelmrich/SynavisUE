@@ -52,20 +52,12 @@ static const TMap<FString, UClass*> ClassMap
   {TEXT("SkyLight"),                                              ASkyLight::StaticClass()},
   {TEXT("ProceduralMeshComponent"),                               UProceduralMeshComponent::StaticClass()},
   {TEXT("BoxComponent"),                                          UBoxComponent::StaticClass()},
-  {TEXT("MaterialInstanceDynamic"),                               UMaterialInstanceDynamic::StaticClass()},
-  {TEXT("Material"),                                              UMaterial::StaticClass()},
-  {TEXT("MaterialExpressionTextureSample"),                       UMaterialExpressionTextureSample::StaticClass()},
-  {TEXT("MaterialExpressionTextureSampleParameter2D"),            UMaterialExpressionTextureSampleParameter2D::StaticClass()},
-  {TEXT("MaterialExpressionTextureSampleParameterCube"),          UMaterialExpressionTextureSampleParameterCube::StaticClass()},
-  {TEXT("MaterialExpressionTextureSampleParameterSubUV"),         UMaterialExpressionTextureSampleParameterSubUV::StaticClass()},
-  {TEXT("MaterialExpressionTextureSampleParameter"),              UMaterialExpressionTextureSampleParameter::StaticClass()},
-  {TEXT("MaterialExpressionTextureObject"),                       UMaterialExpressionTextureObject::StaticClass()},
-  {TEXT("MaterialExpressionTextureSampleParameter2DArray"),       UMaterialExpressionTextureSampleParameter2DArray::StaticClass()},
   {TEXT("ExponentialHeightFog"),                                  AExponentialHeightFog::StaticClass()},
   {TEXT("DecalComponent"),                                        UDecalComponent::StaticClass()},
   {TEXT("SceneCaptureComponent2D"),                               USceneCaptureComponent2D::StaticClass()},
   {TEXT("VolumetricCloudComponent"),                              UVolumetricCloudComponent::StaticClass()},
-  {TEXT("PostProcessComponent"),                                  UPostProcessComponent::StaticClass()}
+  {TEXT("PostProcessComponent"),                                  UPostProcessComponent::StaticClass()},
+  {TEXT("Actor"),                                                 AActor::StaticClass()}
 };
 
 // static variable to contain the spawn parameters associated with class names
@@ -231,8 +223,12 @@ void AWorldSpawner::SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Normal
   TArray<float> Scalars, float Min, float Max, TArray<FVector2D> TexCoords, TArray<FProcMeshTangent> Tangents)
 {
   AActor* Actor = GetWorld()->SpawnActor<AActor>();
+  
+  const auto trans = DroneRef->FindGoodTransformBelowDrone();
+  Actor->SetActorTransform(trans);
   UProceduralMeshComponent* mesh = NewObject<UProceduralMeshComponent>(this);
   Actor->AddInstanceComponent(mesh);
+  mesh->SetRelativeTransform(FTransform::Identity);
   mesh->RegisterComponent();
   mesh->CreateMeshSection_LinearColor(0, Points, Triangles, Normals, TArray<FVector2D>(), TArray<FLinearColor>(), TArray<FProcMeshTangent>(), true);
 }
@@ -275,6 +271,22 @@ void AWorldSpawner::ReceiveStreamingCommunicatorRef()
   {
      return HandlesToRelease.Contains(Handle);
   });
+}
+
+FString AWorldSpawner::PrepareContainerGeometry(TSharedPtr<FJsonObject> Description)
+{
+  // this spawns an actor with a procedural mesh component
+  // the mesh component is positioned according to the json if such a field exists
+  HeldActor = GetWorld()->SpawnActor<AActor>();
+  auto* ProcMesh = NewObject<UProceduralMeshComponent>(HeldActor);
+  HeldComponent = ProcMesh;
+  HeldActor->AddInstanceComponent(HeldComponent);
+  HeldComponent->SetRelativeTransform(FTransform::Identity);
+  HeldComponent->RegisterComponent();
+  ProcMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  FString Result;
+  HeldActor->GetName(Result);
+  return Result;
 }
 
 
@@ -323,13 +335,28 @@ FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
     {
       // check if the object is in the class map
       UClass* Class = ClassMap.FindRef(ObjectName);
+      AActor* Spawned;
       if (Class == nullptr)
       {
         UE_LOG(LogTemp, Error, TEXT("Class %s not found"), *ObjectName);
         return "";
       }
-      AActor* Actor = GetWorld()->SpawnActor<AActor>(Class);
-      if (Actor == nullptr)
+      if(Class->IsChildOf(UActorComponent::StaticClass()))
+      {
+        Spawned = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
+        USceneComponent* Component = NewObject<USceneComponent>(Class);
+        Component->RegisterComponent();
+        Spawned->AddInstanceComponent(Component);
+        HeldActor = Spawned;
+        HeldComponent = Component;
+      }
+      else
+      {
+        Spawned = GetWorld()->SpawnActor<AActor>(Class);
+        HeldActor = Spawned;
+      }
+
+      if (Spawned == nullptr)
       {
         UE_LOG(LogTemp, Error, TEXT("Failed to spawn actor of class %s"), *ObjectName);
         return "";
@@ -338,7 +365,7 @@ FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
       {
         auto parameters = Description->GetObjectField("parameters");
       }
-      return Actor->GetName();
+      return Spawned->GetName();
     }
     else
     {

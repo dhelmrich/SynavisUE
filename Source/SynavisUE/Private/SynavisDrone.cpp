@@ -33,6 +33,10 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkyLightComponent.h"
 
+THIRD_PARTY_INCLUDES_START
+#include <limits>
+THIRD_PARTY_INCLUDES_END
+
 inline float GetColor(const FColor& c, uint32 i)
 {
   switch (i)
@@ -73,22 +77,18 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       auto type = Jason->GetStringField("type");
       if (type == "geometry")
       {
-        if (Jason->TryGetNumberField("points", PointCount))
-        {
-          UE_LOG(LogTemp, Warning, TEXT("Preparing to receive %d Points"), PointCount);
-          Points.Empty();
-          Points.SetNumUninitialized(PointCount, true);
-          Normals.Empty();
-          Normals.SetNumUninitialized(PointCount, true);
-        }
-        if (Jason->TryGetNumberField("triangles", TriangleCount))
-        {
-          UE_LOG(LogTemp, Warning, TEXT("Preparing to receive %d Triangles"), TriangleCount);
-          Triangles.Empty();
-          Triangles.SetNumUninitialized(TriangleCount, true);
-        }
+        Points.Empty();
+        Normals.Empty();
+        Triangles.Empty();
+        UVs.Empty();
+        Scalars.Empty();
+        Tangents.Empty();
+        // this is the partitioned transmission of the geometry
+        // We will receive the buffers in chunks and with individual size warnings
+        // Here we prompt the World Spawner to create a new geometry container
+        WorldSpawner->SpawnObject(Jason);
       }
-      else if (type == "direct")
+      else if (type == "directbase64")
       {
         FBase64 Base64;
         // this is the direct transmission of the geometry
@@ -103,7 +103,11 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           id = Jason->GetStringField("id");
         }
         // fetch the geometry from the world
-
+        if (!WorldSpawner)
+        {
+          SendError("No WorldSpawner found");
+          UE_LOG(LogTemp, Error, TEXT("No WorldSpawner found"));
+        }
         // pre-allocate the data destination
         TArray<uint8> Dest;
         // determine the maximum size of the data
@@ -146,6 +150,48 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         Base64.Decode(uvs, Dest);
         UVs.SetNumUninitialized(Dest.Num() / sizeof(FVector2D), true);
         FMemory::Memcpy(UVs.GetData(), Dest.GetData(), Dest.Num());
+        // see if there are scalars
+        auto scalars = Jason->GetStringField("scalars");
+        if (scalars.Len() > 0)
+        {
+          Dest.Reset();
+          Base64.Decode(scalars, Dest);
+          Scalars.SetNumUninitialized(Dest.Num() / sizeof(float), true);
+          // for range calculation, we must move through the data manually
+          auto ScalarData = reinterpret_cast<float*>(Dest.GetData());
+          auto Min = std::numeric_limits<float>::max();
+          auto Max = std::numeric_limits<float>::min();
+          for (size_t i = 0; i < Dest.Num() / sizeof(float); i++)
+          {
+            auto Value = ScalarData[i];
+            if (Value < Min)
+              Min = Value;
+            if (Value > Max)
+              Max = Value;
+            Scalars[i] = Value;
+          }
+        }
+        // see if there are tangents
+        auto tangents = Jason->GetStringField("tangents");
+        if (tangents.Len() > 0)
+        {
+          Dest.Reset();
+          Base64.Decode(tangents, Dest);
+          Tangents.SetNumUninitialized(Dest.Num() / sizeof(FProcMeshTangent), true);
+          FMemory::Memcpy(Tangents.GetData(), Dest.GetData(), Dest.Num());
+        }
+        else
+        {
+          // calculate tangents
+          Tangents.SetNumUninitialized(Points.Num(), true);
+          for (int p = 0; p < Points.Num(); ++p)
+          {
+            FVector TangentX = FVector::CrossProduct(Normals[p], FVector(0, 0, 1));
+            TangentX.Normalize();
+            Tangents[p] = FProcMeshTangent(TangentX, false);
+          }
+        }
+        WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, Scalars, 0.0, 1.0, UVs, Tangents);
       }
       else if (type == "parameter")
       {
@@ -244,34 +290,34 @@ void ASynavisDrone::ParseInput(FString Descriptor)
 
           // check if we are already tracking this property
           if (this->TransmissionTargets.ContainsByPredicate([Object, PropertyName](const FTransmissionTarget& Target)
-          {
-            return Target.Object == Object && Target.Property->GetName() == PropertyName;
-          }))
+            {
+              return Target.Object == Object && Target.Property->GetName() == PropertyName;
+            }))
           {
             SendError("track request already tracking this property");
             return;
           }
 
-          // check if the property is one of the shortcut properties
-          if (PropertyName == "Position" || PropertyName == "Rotation" || PropertyName == "Scale" || PropertyName == "Transform")
-          {
-            // there is no property to track, but we need to add a transmission target
-            TransmissionTargets.Add({ Object, nullptr, EDataTypeIndicator::Transform, FString::Printf(TEXT("%s.%s"), *ObjectName, *PropertyName) });
-          }
-          else
-          {
-
-            auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
-
-            if (!Property)
+            // check if the property is one of the shortcut properties
+            if (PropertyName == "Position" || PropertyName == "Rotation" || PropertyName == "Scale" || PropertyName == "Transform")
             {
-              SendError("track request Property not found");
-              return;
+              // there is no property to track, but we need to add a transmission target
+              TransmissionTargets.Add({ Object, nullptr, EDataTypeIndicator::Transform, FString::Printf(TEXT("%s.%s"), *ObjectName, *PropertyName) });
             }
+            else
+            {
 
-            this->TransmissionTargets.Add({ Object, Property, this->FindType(Property),
-              FString::Printf(TEXT("%s.%s"),*ObjectName,*PropertyName) });
-          }
+              auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+
+              if (!Property)
+              {
+                SendError("track request Property not found");
+                return;
+              }
+
+              this->TransmissionTargets.Add({ Object, Property, this->FindType(Property),
+                FString::Printf(TEXT("%s.%s"),*ObjectName,*PropertyName) });
+            }
         }
       }
       else if (type == "untrack")
@@ -385,29 +431,73 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           SendError("No world spawner available");
         }
       }
+      else if (type == "buffer")
+      {
+        FString name;
+        if (Jason->HasField("start") && Jason->HasField("size"))
+        {
+          name = Jason->GetStringField("start");
+          auto size = Jason->GetIntegerField("size");
+          ReceptionName = name;
+          if (ReceptionName == "points")
+          {
+            Points.SetNum(size / sizeof(FVector));
+            ReceptionBuffer = reinterpret_cast<uint8*>(Points.GetData());
+          }
+          else if (ReceptionName == "normals")
+          {
+            Points.SetNum(size / sizeof(FVector));
+            ReceptionBuffer = reinterpret_cast<uint8*>(Normals.GetData());
+          }
+          else if (ReceptionName == "triangles")
+          {
+            ReceptionBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
+          }
+          else if (ReceptionName == "uvs")
+          {
+            ReceptionBuffer = reinterpret_cast<uint8*>(UVs.GetData());
+          }
+          else
+          {
+            UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
+            SendError("Unknown buffer name");
+            return;
+          }
+          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name));
+        }
+        else if (Jason->HasField("stop"))
+        {
+          name = Jason->GetStringField("stop");
+          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name));
+        }
+        else
+        {
+          SendError("buffer request needs start or stop field");
+          return;
+        }
+      }
     }
     else
     {
-      switch (ReceptionState)
-      {
-      case EGeometryReceptionState::None:
-        ReceptionState = EGeometryReceptionState::Init;
-        break;
-      case EGeometryReceptionState::Init:
-        ReceptionState = EGeometryReceptionState::Points;
-        break;
-      case EGeometryReceptionState::Points:
-        ReceptionState = EGeometryReceptionState::Normals;
-        break;
-      case EGeometryReceptionState::Normals:
-        ReceptionState = EGeometryReceptionState::Triangles;
-        break;
-      case EGeometryReceptionState::Triangles:
-        ReceptionState = EGeometryReceptionState::None;
-        break;
-      default:
-        break;
-      }
+      UE_LOG(LogTemp, Warning, TEXT("No type field in JSON"));
+      SendError("No type field in JSON");
+    }
+  }
+  else
+  {
+    if (ReceptionName.IsEmpty())
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Received data is not JSON and we are not waiting for data."));
+      SendError("Received data is not JSON and we are not waiting for data.");
+    }
+    else
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Received data is not JSON but we are waiting for data."));
+      const uint8* data = reinterpret_cast<const uint8*>(*Descriptor);
+      auto size = Descriptor.Len() * sizeof(wchar_t);
+      FMemory::Memcpy(ReceptionBuffer, data, size);
+      ReceptionBuffer += size;
+      SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName));
     }
   }
 }
@@ -567,6 +657,23 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       }
     }
   }
+}
+
+FTransform ASynavisDrone::FindGoodTransformBelowDrone()
+{
+  FTransform Output;
+  FHitResult Hit;
+  FVector Start = GetActorLocation();
+  FVector End = Start - FVector(0, 0, 1000);
+  if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECollisionChannel::ECC_WorldStatic, ParamsTrace))
+  {
+    Output.SetLocation(Hit.ImpactPoint);
+  }
+  else
+  {
+    Output = GetActorTransform();
+  }
+  return Output;
 }
 
 FString ASynavisDrone::ListObjectPropertiesAsJSON(UObject* Object)
@@ -802,6 +909,10 @@ void ASynavisDrone::BeginPlay()
   }
 
   this->WorldSpawner = Cast<AWorldSpawner>(UGameplayStatics::GetActorOfClass(world, AWorldSpawner::StaticClass()));
+  if (WorldSpawner)
+  {
+    WorldSpawner->ReceiveStreamingCommunicatorRef(this);
+  }
 }
 
 void ASynavisDrone::PostInitializeComponents()
@@ -956,9 +1067,9 @@ void ASynavisDrone::Tick(float DeltaTime)
         case EDataTypeIndicator::Vector:
           Data.Append(FString::Printf(TEXT("[%f,%f,%f]"), Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->X, Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->Y, Target.Property->ContainerPtrToValuePtr<FVector>(Target.Object)->Z));
           break;
-          case EDataTypeIndicator::Rotator:
-            Data.Append(FString::Printf(TEXT("[%f,%f,%f]"), Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Pitch, Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Yaw, Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Roll));
-            break;
+        case EDataTypeIndicator::Rotator:
+          Data.Append(FString::Printf(TEXT("[%f,%f,%f]"), Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Pitch, Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Yaw, Target.Property->ContainerPtrToValuePtr<FRotator>(Target.Object)->Roll));
+          break;
         }
         if (i < TransmissionTargets.Num() - 1)
           Data.Append(TEXT(","));

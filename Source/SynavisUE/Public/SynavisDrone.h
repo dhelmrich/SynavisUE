@@ -10,7 +10,7 @@
 #include "HAL/Runnable.h"
 #include "Containers/Map.h"
 #include "PixelStreamingInputComponent.h"
-
+#include "ProceduralMeshComponent.h"
 #include "GenericPlatform/GenericPlatformProcess.h"
 
 #include "SynavisDrone.generated.h"
@@ -28,18 +28,6 @@ class USceneCaptureComponent2D;
 class UBoxComponent;
 class UTextureRenderTarget2D;
 class AWorldSpawner;
-
-
-UENUM(BlueprintType)
-enum class EGeometryReceptionState : uint8
-{
-  None = 0,
-	Init,
-	Points,
-	Normals,
-	Triangles,
-	TexCoords
-};
 
 UENUM(BlueprintType)
 enum class EBlueprintSignalling : uint8
@@ -101,9 +89,6 @@ class SYNAVISUE_API ASynavisDrone : public AActor
 	
 public:
 
-  UPROPERTY(VisibleAnywhere)
-	EGeometryReceptionState ReceptionState = EGeometryReceptionState::None;
-
   UFUNCTION(BlueprintCallable, Category = "Network")
   void ParseInput(FString Descriptor);
 	// Sets default values for this actor's properties
@@ -134,6 +119,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Actor")
 	  void LoadFromJSON(FString JasonString = "");
+
+	UFUNCTION(BlueprintCallable, Category = "Actor")
+    FTransform FindGoodTransformBelowDrone();
 
 	UFUNCTION(BlueprintCallable, Category = "Actor")
 	  FString ListObjectPropertiesAsJSON(UObject* Object);
@@ -279,11 +267,14 @@ protected:
 
 
 	FJsonObject JsonConfig;
+	FString ReceptionName;
+	uint8* ReceptionBuffer; // this is normally a reinterpret of the below
 	TArray<FVector> Points;
 	TArray<FVector> Normals;
 	TArray<int> Triangles;
 	TArray<FVector2D> UVs;
-	TArray<float> Scalar;
+	TArray<float> Scalars;
+	TArray<FProcMeshTangent> Tangents;
 	unsigned int PointCount = 0;
 	unsigned int TriangleCount = 0;
 
