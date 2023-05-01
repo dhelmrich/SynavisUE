@@ -238,6 +238,11 @@ public:
 	UPROPERTY()
 	TArray<FTransmissionTarget> TransmissionTargets;
 
+	// This is a method to decode Base64 encoded strings, as the UE implementation
+	// requires too many copying steps to be useful for large data.
+	void DecodeBase64InPlace(char* Source, int32_t Length, uint8* Destination);
+  int32_t GetDecodedSize(char* Source, int32_t Length);
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
@@ -260,15 +265,15 @@ protected:
 	float TargetFocalLength;
   FCollisionObjectQueryParams ParamsObject;
   FCollisionQueryParams ParamsTrace;
-	
 
 	float xprogress = 0.f;
 	float FrameCaptureCounter;
 
-
 	FJsonObject JsonConfig;
 	FString ReceptionName;
+	FString ReceptionFormat;
 	uint8* ReceptionBuffer; // this is normally a reinterpret of the below
+	uint64_t ReceptionBufferSize;
 	TArray<FVector> Points;
 	TArray<FVector> Normals;
 	TArray<int> Triangles;
@@ -277,6 +282,8 @@ protected:
 	TArray<FProcMeshTangent> Tangents;
 	unsigned int PointCount = 0;
 	unsigned int TriangleCount = 0;
+
+	uint8 Base64LookupTable[256];
 
   FCollisionObjectQueryParams ActorFilter;
   FCollisionQueryParams CollisionFilter;

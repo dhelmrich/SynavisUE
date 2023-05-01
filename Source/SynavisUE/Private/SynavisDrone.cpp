@@ -55,6 +55,12 @@ inline float GetColor(const FColor& c, uint32 i)
 
 void ASynavisDrone::ParseInput(FString Descriptor)
 {
+  if (Descriptor.IsEmpty())
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Empty Descriptor"));
+    SendError("Empty Descriptor");
+    return;
+  }
   // reinterpret the message as ASCII
   const auto* Data = reinterpret_cast<const char*>(*Descriptor);
   // parse into FString
@@ -434,12 +440,21 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       else if (type == "buffer")
       {
         FString name;
-        if (Jason->HasField("start") && Jason->HasField("size"))
+        if (Jason->HasField("start") && Jason->HasField("size") && Jason->HasField("format"))
         {
           name = Jason->GetStringField("start");
+          auto Format = Jason->GetStringField("format");
           auto size = Jason->GetIntegerField("size");
+          ReceptionBufferSize = size;
+          ReceptionFormat = Format;
           ReceptionName = name;
-          if (ReceptionName == "points")
+          // if the format is binary, we do not need to do anything
+          // if the format is base64, we need to decode the data and allocate a buffer
+          if (Format == "base64")
+          {
+            ReceptionBuffer = new uint8[size];
+          }
+          else if (ReceptionName == "points")
           {
             Points.SetNum(size / sizeof(FVector));
             ReceptionBuffer = reinterpret_cast<uint8*>(Points.GetData());
@@ -467,6 +482,41 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         }
         else if (Jason->HasField("stop"))
         {
+          // compute the size of the output buffer
+          auto OutputSize = GetDecodedSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
+          
+          uint8* OutputBuffer = nullptr;
+          // if we got a base64 buffer, we need to decode it
+          if (ReceptionFormat == "base64")
+          {
+            if (ReceptionName == "points")
+            {
+              Points.SetNum(OutputSize / sizeof(FVector));
+              OutputBuffer = reinterpret_cast<uint8*>(Points.GetData());
+            }
+            else if (ReceptionName == "normals")
+            {
+              Normals.SetNum(OutputSize / sizeof(FVector));
+              OutputBuffer = reinterpret_cast<uint8*>(Normals.GetData());
+            }
+            else if (ReceptionName == "triangles")
+            {
+              Triangles.SetNum(OutputSize / sizeof(int32));
+              OutputBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
+            }
+            else if (ReceptionName == "uvs")
+            {
+              UVs.SetNum(OutputSize / sizeof(FVector2D));
+              OutputBuffer = reinterpret_cast<uint8*>(UVs.GetData());
+            }
+            else
+            {
+              UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
+              SendError("Unknown buffer name");
+              return;
+            }
+          }
+          DecodeBase64InPlace(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize, OutputBuffer);
           name = Jason->GetStringField("stop");
           SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name));
         }
@@ -526,6 +576,18 @@ ASynavisDrone::ASynavisDrone()
 {
   // Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
   PrimaryActorTick.bCanEverTick = true;
+
+  // briefly construct the decoding alphabet
+  
+  constexpr char Base64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  for (int32_t i = 0; i < 256; ++i)
+  {
+    Base64LookupTable[i] = 0xFF;
+  }
+  for (int32_t i = 0; i < 64; ++i)
+  {
+    Base64LookupTable[Base64Alphabet[i]] = i;
+  }
 
   CoordinateSource = CreateDefaultSubobject<USceneComponent>(TEXT("Root Component"));
   RootComponent = CoordinateSource;
@@ -789,6 +851,56 @@ const bool ASynavisDrone::IsInEditor() const
 #else
   return false;
 #endif
+}
+
+void ASynavisDrone::DecodeBase64InPlace(char* Source, int32_t Length, uint8* Destination)
+{
+  // decode the base64 string
+  int32_t Padding = 0;
+  for (int32_t i = Length - 1; Source[i] == '='; --i)
+  {
+    ++Padding;
+  }
+  int32_t DecodedSize = ((Length * 3) / 4) - Padding;
+  int32_t SourceIndex = 0;
+  int32_t DestinationIndex = 0;
+  while (SourceIndex < Length)
+  {
+    uint32_t Accumulator = 0;
+    int32_t Bits = 0;
+    while (SourceIndex < Length && Bits < 24)
+    {
+      uint8_t Value = Base64LookupTable[Source[SourceIndex++]];
+      if (Value != 0xFF)
+      {
+        Accumulator = (Accumulator << 6) | Value;
+        Bits += 6;
+      }
+    }
+    if (Bits >= 8)
+    {
+      Destination[DestinationIndex++] = (Accumulator >> 16) & 0xFF;
+    }
+    if (Bits >= 16)
+    {
+      Destination[DestinationIndex++] = (Accumulator >> 8) & 0xFF;
+    }
+    if (Bits >= 24)
+    {
+      Destination[DestinationIndex++] = Accumulator & 0xFF;
+    }
+  }
+}
+
+int32_t ASynavisDrone::GetDecodedSize(char* Source, int32_t Length)
+{
+  // calculate the size of the decoded string
+  int32_t Padding = 0;
+  for (int32_t i = Length - 1; Source[i] == '='; --i)
+  {
+    ++Padding;
+  }
+  return ((Length * 3) / 4) - Padding;
 }
 
 // Called when the game starts or when spawned
