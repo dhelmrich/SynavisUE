@@ -69,14 +69,14 @@ void ASynavisDrone::ParseInput(FString Descriptor)
   Message.ReplaceInline(TEXT("\r"), TEXT(""));
   Message.ReplaceInline(TEXT("\n"), TEXT(""));
 
-  UE_LOG(LogTemp, Warning, TEXT("M: %s"), *Message);
-  if (Descriptor[0] == '{' && Descriptor[Descriptor.Len() - 1] == '}')
+  //UE_LOG(LogTemp, Warning, TEXT("M: %s"), *Message);
+  if (Message[0] == '{' && Message[Message.Len() - 1] == '}')
   {
     TSharedPtr<FJsonObject> Jason = MakeShareable(new FJsonObject());
-    TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(Descriptor);
+    TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(Message);
     FJsonSerializer::Deserialize(Reader, Jason);
 
-    UE_LOG(LogTemp, Warning, TEXT("Received %s"), *Descriptor);
+    UE_LOG(LogTemp, Warning, TEXT("Received %s"), *Message);
     // check if the message is a geometry message
     if (Jason->HasField("type"))
     {
@@ -262,6 +262,18 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             this->SendResponse(message);
           }
         }
+        else if (Jason->HasField("property"))
+        {
+          auto* Target = this->GetObjectFromJSON(Jason.Get());
+          if (Target != nullptr)
+          {
+            FString Name = Target->GetName();
+            FString Property = Jason->GetStringField("property");
+            FString JsonData = GetJSONFromObjectProperty(Target, Property);
+            FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
+            this->SendResponse(message);
+          }
+        }
         else
         {
           auto* Target = this->GetObjectFromJSON(Jason.Get());
@@ -442,12 +454,14 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         FString name;
         if (Jason->HasField("start") && Jason->HasField("size") && Jason->HasField("format"))
         {
+
           name = Jason->GetStringField("start");
           auto Format = Jason->GetStringField("format");
           auto size = Jason->GetIntegerField("size");
           ReceptionBufferSize = size;
           ReceptionFormat = Format;
           ReceptionName = name;
+          ReceptionBufferOffset = 0;
           // if the format is binary, we do not need to do anything
           // if the format is base64, we need to decode the data and allocate a buffer
           if (Format == "base64")
@@ -484,7 +498,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         {
           // compute the size of the output buffer
           auto OutputSize = GetDecodedSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
-          
+
           uint8* OutputBuffer = nullptr;
           // if we got a base64 buffer, we need to decode it
           if (ReceptionFormat == "base64")
@@ -509,16 +523,62 @@ void ASynavisDrone::ParseInput(FString Descriptor)
               UVs.SetNum(OutputSize / sizeof(FVector2D));
               OutputBuffer = reinterpret_cast<uint8*>(UVs.GetData());
             }
+            else if (ReceptionName == "tangents")
+            {
+              // here we need to allocate a buffer for the tangents with FVector
+              // This is because we do not transmit the fourth component of the tangent
+              Tangents.SetNum(OutputSize / sizeof(FVector));
+              // parse the vectors into new FProcMeshTangents and copy them into the array
+              float* TangentData = reinterpret_cast<float*>(ReceptionBuffer);
+              for (int i = 0; i < OutputSize / sizeof(FVector); i++)
+              {
+                Tangents[i].TangentX = FVector(TangentData[i * 3], TangentData[i * 3 + 1], TangentData[i * 3 + 2]);
+                Tangents[i].bFlipTangentY = false;
+              }
+            }
             else
             {
               UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
               SendError("Unknown buffer name");
               return;
             }
+
+            // use built-in unreal functions as long as the in-place decoding does not work
+            // Create FString from Reception Buffer
+            FString Base64String = FString(ANSI_TO_TCHAR(reinterpret_cast<char*>(ReceptionBuffer)));
+
+            int32_t EndBuffer = 0;
+            // find the end of the base64 string by searching for the first occurence of a non-base64 character
+            for (; EndBuffer < ReceptionBufferSize; EndBuffer++)
+            {
+              // manually check the character against the base64 alphabet
+              // break when we find the first character that is part of the base64 alphabet
+              // this is because we start from the end of the string
+              const char c = reinterpret_cast<const char*>(ReceptionBuffer)[Base64String.Len() - EndBuffer - 1];
+              if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r'))
+              {
+                break;
+              }
+            }
+
+            // Decode the Base64 String
+            // we need to remove the last 6 characters, because they are not part of the base64 string
+            // this is because the base64 string is padded with 6 characters
+            if (!FBase64::Decode(reinterpret_cast<const ANSICHAR*>(ReceptionBuffer), ReceptionBufferSize - EndBuffer, OutputBuffer))
+            {
+              UE_LOG(LogTemp, Warning, TEXT("Could not decode base64 string"));
+              // for debug purposes, we write the first 20 letters of the string onto log
+              //UE_LOG(LogTemp, Warning, TEXT("First 20 letters of string: %s"), *Base64String.Left(20));
+              //UE_LOG(LogTemp, Warning, TEXT("Last 20 letters of string: %s"), *Base64String.Right(20));
+              SendError("Could not decode base64 string");
+              return;
+            }
+
+            //DecodeBase64InPlace(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize, OutputBuffer);
+            name = Jason->GetStringField("stop");
+            SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name));
           }
-          DecodeBase64InPlace(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize, OutputBuffer);
-          name = Jason->GetStringField("stop");
-          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name));
         }
         else
         {
@@ -544,9 +604,11 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     {
       UE_LOG(LogTemp, Warning, TEXT("Received data is not JSON but we are waiting for data."));
       const uint8* data = reinterpret_cast<const uint8*>(*Descriptor);
-      auto size = Descriptor.Len() * sizeof(wchar_t);
-      FMemory::Memcpy(ReceptionBuffer, data, size);
-      ReceptionBuffer += size;
+      // length of the data in bytes
+      auto size = FCStringAnsi::Strlen(reinterpret_cast<const ANSICHAR*>(data));
+
+      FMemory::Memcpy(ReceptionBuffer + ReceptionBufferOffset, data, size);
+      ReceptionBufferOffset += size;
       SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName));
     }
   }
@@ -561,7 +623,7 @@ void ASynavisDrone::SendResponse(FString Descriptor)
 
 void ASynavisDrone::SendError(FString Message)
 {
-  FString Response = FString::Printf(TEXT("{\"type\":\"error\",\"message\":%s}"), *Message);
+  FString Response = FString::Printf(TEXT("{\"type\":\"error\",\"message\":\"%s\"}"), *Message);
   SendResponse(Response);
 }
 
@@ -578,7 +640,7 @@ ASynavisDrone::ASynavisDrone()
   PrimaryActorTick.bCanEverTick = true;
 
   // briefly construct the decoding alphabet
-  
+
   constexpr char Base64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   for (int32_t i = 0; i < 256; ++i)
   {
@@ -760,9 +822,50 @@ FString ASynavisDrone::ListObjectPropertiesAsJSON(UObject* Object)
 void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
 {
   // received a parameter update
-  FString Name = JSON->GetStringField("name");
+  FString Name = JSON->GetStringField("property");
 
-  auto* Property = GetClass()->FindPropertyByName(*Name);
+  USceneComponent* ComponentIdentity = Cast<USceneComponent>(Object);
+  AActor* ActorIdentity = Cast<AActor>(Object);
+  auto* Property = Object->GetClass()->FindPropertyByName(*Name);
+  if (ActorIdentity)
+  {
+    ComponentIdentity = ActorIdentity->GetRootComponent();
+  }
+
+  // Find out whether one of the shortcut properties was updated
+  if (ComponentIdentity)
+  {
+    if (Name == "position")
+    {
+      if (JSON->HasField("x") && JSON->HasField("y") && JSON->HasField("z"))
+      {
+        ComponentIdentity->SetWorldLocation(FVector(JSON->GetNumberField("x"), JSON->GetNumberField("y"), JSON->GetNumberField("z")));
+        return;
+      }
+    }
+    else if (Name == "orientation")
+    {
+      if (JSON->HasField("p") && JSON->HasField("y") && JSON->HasField("r"))
+      {
+        ComponentIdentity->SetWorldRotation(FRotator(JSON->GetNumberField("p"), JSON->GetNumberField("y"), JSON->GetNumberField("r")));
+        return;
+      }
+    }
+    else if (Name == "scale")
+    {
+      if (JSON->HasField("x") && JSON->HasField("y") && JSON->HasField("z"))
+      {
+        ComponentIdentity->SetWorldScale3D(FVector(JSON->GetNumberField("x"), JSON->GetNumberField("y"), JSON->GetNumberField("z")));
+        return;
+      }
+    }
+    else if (Name == "visibility")
+    {
+      if (JSON->HasField("value"))
+        ComponentIdentity->SetVisibility(JSON->GetBoolField("value"));
+      return;
+    }
+  }
   if (Property)
   {
     if (Property->IsA(FIntProperty::StaticClass()))
@@ -801,6 +904,11 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
         }
       }
     }
+  }
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Property %s not found"), *Name);
+    SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not found\"}"));
   }
 }
 
@@ -844,6 +952,102 @@ UObject* ASynavisDrone::GetObjectFromJSON(FJsonObject* JSON)
   return nullptr;
 }
 
+FString ASynavisDrone::GetJSONFromObjectProperty(UObject* Object, FString PropertyName)
+{
+  USceneComponent* ComponentIdentity = Cast<USceneComponent>(Object);
+  AActor* ActorIdentity = Cast<AActor>(Object);
+  auto* Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+  if (ActorIdentity)
+  {
+    ComponentIdentity = ActorIdentity->GetRootComponent();
+  }
+  // Find out whether one of the shortcut properties was requested
+  if (ComponentIdentity)
+  {
+    if (PropertyName == "position")
+    {
+      FVector Position = ComponentIdentity->GetComponentLocation();
+      return FString::Printf(TEXT("{\"x\":%f,\"y\":%f,\"z\":%f}"), Position.X, Position.Y, Position.Z);
+    }
+    else if (PropertyName == "orientation")
+    {
+      FRotator Orientation = ComponentIdentity->GetComponentRotation();
+      return FString::Printf(TEXT("{\"p\":%f,\"y\":%f,\"r\":%f}"), Orientation.Pitch, Orientation.Yaw, Orientation.Roll);
+    }
+    else if (PropertyName == "scale")
+    {
+      FVector Scale = ComponentIdentity->GetComponentScale();
+      return FString::Printf(TEXT("{\"x\":%f,\"y\":%f,\"z\":%f}"), Scale.X, Scale.Y, Scale.Z);
+    }
+    else if (PropertyName == "visibility")
+    {
+      return FString::Printf(TEXT("{\"value\":%s}"), ComponentIdentity->IsVisible() ? TEXT("true") : TEXT("false"));
+    }
+  }
+  if (Property)
+  {
+    // find out whether the property is a vector
+    const auto StructProperty = CastField<FStructProperty>(Property);
+    const auto FloatProperty = CastField<FFloatProperty>(Property);
+    const auto IntProperty = CastField<FIntProperty>(Property);
+    const auto BoolProperty = CastField<FBoolProperty>(Property);
+    const auto StringProperty = CastField<FStrProperty>(Property);
+    if (StructProperty)
+    {
+      // check if the struct is a vector via the JSON
+      if (StructProperty->Struct->GetFName() == "Vector")
+      {
+        auto* VectorValue = StructProperty->ContainerPtrToValuePtr<FVector>(Object);
+        if (VectorValue)
+        {
+          return FString::Printf(TEXT("{\"x\":%f,\"y\":%f,\"z\":%f}"), VectorValue->X, VectorValue->Y, VectorValue->Z);
+        }
+      }
+    }
+    else if (FloatProperty)
+    {
+      auto* FloatValue = FloatProperty->ContainerPtrToValuePtr<float>(Object);
+      if (FloatValue)
+      {
+        return FString::Printf(TEXT("{\"value\":%f}"), *FloatValue);
+      }
+    }
+    else if (IntProperty)
+    {
+      auto* IntValue = IntProperty->ContainerPtrToValuePtr<int>(Object);
+      if (IntValue)
+      {
+        return FString::Printf(TEXT("{\"value\":%d}"), *IntValue);
+      }
+    }
+    else if (BoolProperty)
+    {
+      auto* BoolValue = BoolProperty->ContainerPtrToValuePtr<bool>(Object);
+      if (BoolValue)
+      {
+        return FString::Printf(TEXT("{\"value\":%s}"), *BoolValue ? TEXT("true") : TEXT("false"));
+      }
+    }
+    else if (StringProperty)
+    {
+      auto* StringValue = StringProperty->ContainerPtrToValuePtr<FString>(Object);
+      if (StringValue)
+      {
+        return FString::Printf(TEXT("{\"value\":\"%s\"}"), **StringValue);
+      }
+    }
+    else
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Property %s not vector, float, bool, or string"), *PropertyName);
+      SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not vector, float, bool, or string\"}"));
+      return TEXT("{}");
+    }
+  }
+  UE_LOG(LogTemp, Warning, TEXT("Property %s not found"), *PropertyName);
+  SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not found\"}"));
+  return TEXT("{}");
+}
+
 const bool ASynavisDrone::IsInEditor() const
 {
 #ifdef WITH_EDITOR
@@ -853,7 +1057,7 @@ const bool ASynavisDrone::IsInEditor() const
 #endif
 }
 
-void ASynavisDrone::DecodeBase64InPlace(char* Source, int32_t Length, uint8* Destination)
+void ASynavisDrone::DecodeBase64InPlace(char* Source, int32_t Length, uint8* Destination, uint32 sizeoftype)
 {
   // decode the base64 string
   int32_t Padding = 0;
@@ -870,7 +1074,8 @@ void ASynavisDrone::DecodeBase64InPlace(char* Source, int32_t Length, uint8* Des
     int32_t Bits = 0;
     while (SourceIndex < Length && Bits < 24)
     {
-      uint8_t Value = Base64LookupTable[Source[SourceIndex++]];
+      char SourceChar = Source[SourceIndex++];
+      uint8_t Value = Base64LookupTable[SourceChar];
       if (Value != 0xFF)
       {
         Accumulator = (Accumulator << 6) | Value;

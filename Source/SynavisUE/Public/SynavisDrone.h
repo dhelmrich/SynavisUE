@@ -240,7 +240,7 @@ public:
 
 	// This is a method to decode Base64 encoded strings, as the UE implementation
 	// requires too many copying steps to be useful for large data.
-	void DecodeBase64InPlace(char* Source, int32_t Length, uint8* Destination);
+	void DecodeBase64InPlace(char* Source, int32_t Length, uint8* Destination, uint32 sizeoftype = sizeof(char));
   int32_t GetDecodedSize(char* Source, int32_t Length);
 
 protected:
@@ -274,6 +274,7 @@ protected:
 	FString ReceptionFormat;
 	uint8* ReceptionBuffer; // this is normally a reinterpret of the below
 	uint64_t ReceptionBufferSize;
+	uint64_t ReceptionBufferOffset;
 	TArray<FVector> Points;
 	TArray<FVector> Normals;
 	TArray<int> Triangles;
