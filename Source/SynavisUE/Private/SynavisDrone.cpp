@@ -76,11 +76,12 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(Message);
     FJsonSerializer::Deserialize(Reader, Jason);
 
-    UE_LOG(LogTemp, Warning, TEXT("Received %s"), *Message);
+    
     // check if the message is a geometry message
     if (Jason->HasField("type"))
     {
       auto type = Jason->GetStringField("type");
+      UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
       if (type == "geometry")
       {
         Points.Empty();
@@ -152,34 +153,40 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         FMemory::Memcpy(Triangles.GetData(), Dest.GetData(), Dest.Num());
         UVs.Reset();
         Dest.Reset();
-        auto uvs = Jason->GetStringField("texcoords");
-        Base64.Decode(uvs, Dest);
-        UVs.SetNumUninitialized(Dest.Num() / sizeof(FVector2D), true);
-        FMemory::Memcpy(UVs.GetData(), Dest.GetData(), Dest.Num());
-        // see if there are scalars
-        auto scalars = Jason->GetStringField("scalars");
-        if (scalars.Len() > 0)
+        if(Jason->HasField("texcoords"))
         {
-          Dest.Reset();
-          Base64.Decode(scalars, Dest);
-          Scalars.SetNumUninitialized(Dest.Num() / sizeof(float), true);
-          // for range calculation, we must move through the data manually
-          auto ScalarData = reinterpret_cast<float*>(Dest.GetData());
-          auto Min = std::numeric_limits<float>::max();
-          auto Max = std::numeric_limits<float>::min();
-          for (size_t i = 0; i < Dest.Num() / sizeof(float); i++)
+          auto uvs = Jason->GetStringField("texcoords");
+          Base64.Decode(uvs, Dest);
+          UVs.SetNumUninitialized(Dest.Num() / sizeof(FVector2D), true);
+          FMemory::Memcpy(UVs.GetData(), Dest.GetData(), Dest.Num());
+        }
+        if(Jason->HasField("scalars"))
+        {
+          // see if there are scalars
+          auto scalars = Jason->GetStringField("scalars");
+          if (scalars.Len() > 0)
           {
-            auto Value = ScalarData[i];
-            if (Value < Min)
-              Min = Value;
-            if (Value > Max)
-              Max = Value;
-            Scalars[i] = Value;
+            Dest.Reset();
+            Base64.Decode(scalars, Dest);
+            Scalars.SetNumUninitialized(Dest.Num() / sizeof(float), true);
+            // for range calculation, we must move through the data manually
+            auto ScalarData = reinterpret_cast<float*>(Dest.GetData());
+            auto Min = std::numeric_limits<float>::max();
+            auto Max = std::numeric_limits<float>::min();
+            for (size_t i = 0; i < Dest.Num() / sizeof(float); i++)
+            {
+              auto Value = ScalarData[i];
+              if (Value < Min)
+                Min = Value;
+              if (Value > Max)
+                Max = Value;
+              Scalars[i] = Value;
+            }
           }
         }
         // see if there are tangents
-        auto tangents = Jason->GetStringField("tangents");
-        if (tangents.Len() > 0)
+        FString tangents;
+        if (!Jason->TryGetStringField("tangents",tangents) || tangents.Len() > 0)
         {
           Dest.Reset();
           Base64.Decode(tangents, Dest);
@@ -574,6 +581,10 @@ void ASynavisDrone::ParseInput(FString Descriptor)
               SendError("Could not decode base64 string");
               return;
             }
+            else
+            {
+              SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%d}"), *name, ReceptionBufferSize));
+            }
 
             //DecodeBase64InPlace(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize, OutputBuffer);
             name = Jason->GetStringField("stop");
@@ -602,10 +613,10 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     }
     else
     {
-      UE_LOG(LogTemp, Warning, TEXT("Received data is not JSON but we are waiting for data."));
+      const uint64 size = FCStringAnsi::Strlen(reinterpret_cast<const ANSICHAR*>(*Descriptor));
+      UE_LOG(LogTemp, Warning, TEXT("Received data of size %d is not JSON but we are waiting for data."), size);
       const uint8* data = reinterpret_cast<const uint8*>(*Descriptor);
       // length of the data in bytes
-      auto size = FCStringAnsi::Strlen(reinterpret_cast<const ANSICHAR*>(data));
 
       FMemory::Memcpy(ReceptionBuffer + ReceptionBufferOffset, data, size);
       ReceptionBufferOffset += size;
@@ -1296,6 +1307,13 @@ void ASynavisDrone::EnsureDistancePreservation()
 
 void ASynavisDrone::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+  Super::EndPlay(EndPlayReason);
+  if (WorldSpawner)
+  {
+       WorldSpawner->ReceiveStreamingCommunicatorRef(nullptr);
+  }
+  SendResponse(FString("{\"type\":\"closed\""));
+
 }
 
 // Called every frame

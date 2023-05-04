@@ -230,7 +230,8 @@ void AWorldSpawner::SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Normal
   Actor->AddInstanceComponent(mesh);
   mesh->SetRelativeTransform(FTransform::Identity);
   mesh->RegisterComponent();
-  mesh->CreateMeshSection_LinearColor(0, Points, Triangles, Normals, TArray<FVector2D>(), TArray<FLinearColor>(), TArray<FProcMeshTangent>(), true);
+  mesh->CreateMeshSection_LinearColor(0, Points, Triangles, Normals, TArray<FVector2D>(), TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
+  this->OnSpawnProcMesh.Broadcast(mesh);
 }
 
 

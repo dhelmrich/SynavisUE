@@ -6,6 +6,8 @@
 #include "GameFramework/Actor.h"
 #include "WorldSpawner.generated.h"
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSpawnProcMesh, UProceduralMeshComponent*, ProcMesh);
+
 
 USTRUCT(BlueprintType)
 struct FObjectSpawnInstance
@@ -46,7 +48,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Coupling")
 	TArray<FString> GetNamesOfSpawnableTypes();
-	
+
+	UPROPERTY(BlueprintAssignable, Category = "Management")
+	FSpawnProcMesh OnSpawnProcMesh;
 
 	UFUNCTION()
 	void ReceiveStreamingCommunicatorRef();
