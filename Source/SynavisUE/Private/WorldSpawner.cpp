@@ -254,6 +254,7 @@ TArray<FString> AWorldSpawner::GetNamesOfSpawnableTypes()
 
 void AWorldSpawner::ReceiveStreamingCommunicatorRef()
 {
+  // I need to find a smarter way of removing the handles from the array
   decltype(StreamableHandles) HandlesToRelease;
   // Go through present streaming handles
   for(auto & StreamingHandle : StreamableHandles)
@@ -365,6 +366,7 @@ FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
       if(Description->HasField("parameters"))
       {
         auto parameters = Description->GetObjectField("parameters");
+        this->DroneRef->ApplyJSONToObject(Spawned, parameters.Get());
       }
       return Spawned->GetName();
     }
