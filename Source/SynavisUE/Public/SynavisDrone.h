@@ -277,7 +277,7 @@ protected:
 	uint64_t ReceptionBufferOffset;
 	TArray<FVector> Points;
 	TArray<FVector> Normals;
-	TArray<int> Triangles;
+	TArray<int32> Triangles;
 	TArray<FVector2D> UVs;
 	TArray<float> Scalars;
 	TArray<FProcMeshTangent> Tangents;

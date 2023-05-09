@@ -76,7 +76,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(Message);
     FJsonSerializer::Deserialize(Reader, Jason);
 
-    
+
     // check if the message is a geometry message
     if (Jason->HasField("type"))
     {
@@ -153,14 +153,14 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         FMemory::Memcpy(Triangles.GetData(), Dest.GetData(), Dest.Num());
         UVs.Reset();
         Dest.Reset();
-        if(Jason->HasField("texcoords"))
+        if (Jason->HasField("texcoords"))
         {
           auto uvs = Jason->GetStringField("texcoords");
           Base64.Decode(uvs, Dest);
           UVs.SetNumUninitialized(Dest.Num() / sizeof(FVector2D), true);
           FMemory::Memcpy(UVs.GetData(), Dest.GetData(), Dest.Num());
         }
-        if(Jason->HasField("scalars"))
+        if (Jason->HasField("scalars"))
         {
           // see if there are scalars
           auto scalars = Jason->GetStringField("scalars");
@@ -186,7 +186,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         }
         // see if there are tangents
         FString tangents;
-        if (!Jason->TryGetStringField("tangents",tangents) || tangents.Len() > 0)
+        if (!Jason->TryGetStringField("tangents", tangents) || tangents.Len() > 0)
         {
           Dest.Reset();
           Base64.Decode(tangents, Dest);
@@ -445,53 +445,142 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       }
       else if (type == "spawn")
       {
-        if (this->WorldSpawner)
+        if (Jason->HasField("object") && Jason->GetStringField("object") == "ProceduralMeshComponent")
         {
+          UE_LOG(LogTemp, Warning, TEXT("Spawn request for ProceduralMeshComponent"));
+          int32 section_index = 0;
+          if (Jason->HasField("section"))
+          {
+            section_index = Jason->GetIntegerField("section");
+          }
           auto name = this->WorldSpawner->SpawnObject(Jason);
-          SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name));
+          UProceduralMeshComponent* Mesh = Cast<UProceduralMeshComponent>(WorldSpawner->GetHeldComponent());
+          TArray<FColor> Colors;
+          if(Scalars.Num() == Points.Num())
+          {
+            // we have scalars, so we need to convert them to colors
+            // just as an example, we use a bluered
+            // we can use the same color map for all scalars
+            // but we need to know the range of the scalars
+            float min = Scalars[0];
+            float max = Scalars[0];
+            for (auto scalar : Scalars)
+            {
+              if (scalar < min)
+              {
+                min = scalar;
+              }
+              if (scalar > max)
+              {
+                max = scalar;
+              }
+            }
+            for (auto scalar : Scalars)
+            {
+              float t = (scalar - min) / (max - min);
+              FLinearColor color = FLinearColor::LerpUsingHSV(FLinearColor(1, 0, 0), FLinearColor(0, 0, 1), t);
+              Colors.Add(color.ToFColor(false));
+            }
+          }
+          Mesh->CreateMeshSection(section_index, Points, Triangles, Normals, UVs, Colors, Tangents, true);
+      }
+      else if (this->WorldSpawner)
+      {
+        auto name = this->WorldSpawner->SpawnObject(Jason);
+        SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name));
+      }
+      else
+      {
+        UE_LOG(LogTemp, Warning, TEXT("No world spawner available"));
+        SendError("No world spawner available");
+      }
+    }
+    else if (type == "buffer")
+    {
+      FString name;
+      if (Jason->HasField("start") && Jason->HasField("size") && Jason->HasField("format"))
+      {
+
+        name = Jason->GetStringField("start");
+        auto Format = Jason->GetStringField("format");
+        auto size = Jason->GetIntegerField("size");
+        ReceptionBufferSize = size;
+        ReceptionFormat = Format;
+        ReceptionName = name;
+        ReceptionBufferOffset = 0;
+        // if the format is binary, we do not need to do anything
+        // if the format is base64, we need to decode the data and allocate a buffer
+        if (Format == "base64")
+        {
+          ReceptionBuffer = new uint8[size];
+        }
+        else if (ReceptionName == "points")
+        {
+          Points.SetNum(size / sizeof(FVector));
+          ReceptionBuffer = reinterpret_cast<uint8*>(Points.GetData());
+        }
+        else if (ReceptionName == "normals")
+        {
+          Points.SetNum(size / sizeof(FVector));
+          ReceptionBuffer = reinterpret_cast<uint8*>(Normals.GetData());
+        }
+        else if (ReceptionName == "triangles")
+        {
+          ReceptionBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
+        }
+        else if (ReceptionName == "uvs")
+        {
+          ReceptionBuffer = reinterpret_cast<uint8*>(UVs.GetData());
         }
         else
         {
-          UE_LOG(LogTemp, Warning, TEXT("No world spawner available"));
-          SendError("No world spawner available");
+          UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
+          SendError("Unknown buffer name");
+          return;
         }
+        SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name));
       }
-      else if (type == "buffer")
+      else if (Jason->HasField("stop"))
       {
-        FString name;
-        if (Jason->HasField("start") && Jason->HasField("size") && Jason->HasField("format"))
-        {
+        // compute the size of the output buffer
+        auto OutputSize = GetDecodedSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
 
-          name = Jason->GetStringField("start");
-          auto Format = Jason->GetStringField("format");
-          auto size = Jason->GetIntegerField("size");
-          ReceptionBufferSize = size;
-          ReceptionFormat = Format;
-          ReceptionName = name;
-          ReceptionBufferOffset = 0;
-          // if the format is binary, we do not need to do anything
-          // if the format is base64, we need to decode the data and allocate a buffer
-          if (Format == "base64")
+        uint8* OutputBuffer = nullptr;
+        // if we got a base64 buffer, we need to decode it
+        if (ReceptionFormat == "base64")
+        {
+          if (ReceptionName == "points")
           {
-            ReceptionBuffer = new uint8[size];
-          }
-          else if (ReceptionName == "points")
-          {
-            Points.SetNum(size / sizeof(FVector));
-            ReceptionBuffer = reinterpret_cast<uint8*>(Points.GetData());
+            Points.SetNum(OutputSize / sizeof(FVector));
+            OutputBuffer = reinterpret_cast<uint8*>(Points.GetData());
           }
           else if (ReceptionName == "normals")
           {
-            Points.SetNum(size / sizeof(FVector));
-            ReceptionBuffer = reinterpret_cast<uint8*>(Normals.GetData());
+            Normals.SetNum(OutputSize / sizeof(FVector));
+            OutputBuffer = reinterpret_cast<uint8*>(Normals.GetData());
           }
           else if (ReceptionName == "triangles")
           {
-            ReceptionBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
+            Triangles.SetNum(OutputSize / sizeof(int32));
+            OutputBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
           }
           else if (ReceptionName == "uvs")
           {
-            ReceptionBuffer = reinterpret_cast<uint8*>(UVs.GetData());
+            UVs.SetNum(OutputSize / sizeof(FVector2D));
+            OutputBuffer = reinterpret_cast<uint8*>(UVs.GetData());
+          }
+          else if (ReceptionName == "tangents")
+          {
+            // here we need to allocate a buffer for the tangents with FVector
+            // This is because we do not transmit the fourth component of the tangent
+            Tangents.SetNum(OutputSize / sizeof(FVector));
+            // parse the vectors into new FProcMeshTangents and copy them into the array
+            float* TangentData = reinterpret_cast<float*>(ReceptionBuffer);
+            for (int i = 0; i < OutputSize / sizeof(FVector); i++)
+            {
+              Tangents[i].TangentX = FVector(TangentData[i * 3], TangentData[i * 3 + 1], TangentData[i * 3 + 2]);
+              Tangents[i].bFlipTangentY = false;
+            }
           }
           else
           {
@@ -499,111 +588,55 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             SendError("Unknown buffer name");
             return;
           }
-          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name));
-        }
-        else if (Jason->HasField("stop"))
-        {
-          // compute the size of the output buffer
-          auto OutputSize = GetDecodedSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
 
-          uint8* OutputBuffer = nullptr;
-          // if we got a base64 buffer, we need to decode it
-          if (ReceptionFormat == "base64")
+          // use built-in unreal functions as long as the in-place decoding does not work
+          // Create FString from Reception Buffer
+
+          int32_t EndBuffer = 0;
+          // find the end of the base64 string by searching for the first occurence of a non-base64 character
+          for (; EndBuffer < ReceptionBufferSize; EndBuffer++)
           {
-            if (ReceptionName == "points")
+            // manually check the character against the base64 alphabet
+            // break when we find the first character that is part of the base64 alphabet
+            // this is because we start from the end of the string
+            const char c = reinterpret_cast<const char*>(ReceptionBuffer)[ReceptionBufferSize - EndBuffer - 1];
+            if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+              || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r'))
             {
-              Points.SetNum(OutputSize / sizeof(FVector));
-              OutputBuffer = reinterpret_cast<uint8*>(Points.GetData());
+              break;
             }
-            else if (ReceptionName == "normals")
-            {
-              Normals.SetNum(OutputSize / sizeof(FVector));
-              OutputBuffer = reinterpret_cast<uint8*>(Normals.GetData());
-            }
-            else if (ReceptionName == "triangles")
-            {
-              Triangles.SetNum(OutputSize / sizeof(int32));
-              OutputBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
-            }
-            else if (ReceptionName == "uvs")
-            {
-              UVs.SetNum(OutputSize / sizeof(FVector2D));
-              OutputBuffer = reinterpret_cast<uint8*>(UVs.GetData());
-            }
-            else if (ReceptionName == "tangents")
-            {
-              // here we need to allocate a buffer for the tangents with FVector
-              // This is because we do not transmit the fourth component of the tangent
-              Tangents.SetNum(OutputSize / sizeof(FVector));
-              // parse the vectors into new FProcMeshTangents and copy them into the array
-              float* TangentData = reinterpret_cast<float*>(ReceptionBuffer);
-              for (int i = 0; i < OutputSize / sizeof(FVector); i++)
-              {
-                Tangents[i].TangentX = FVector(TangentData[i * 3], TangentData[i * 3 + 1], TangentData[i * 3 + 2]);
-                Tangents[i].bFlipTangentY = false;
-              }
-            }
-            else
-            {
-              UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
-              SendError("Unknown buffer name");
-              return;
-            }
-
-            // use built-in unreal functions as long as the in-place decoding does not work
-            // Create FString from Reception Buffer
-            FString Base64String = FString(ANSI_TO_TCHAR(reinterpret_cast<char*>(ReceptionBuffer)));
-
-            int32_t EndBuffer = 0;
-            // find the end of the base64 string by searching for the first occurence of a non-base64 character
-            for (; EndBuffer < ReceptionBufferSize; EndBuffer++)
-            {
-              // manually check the character against the base64 alphabet
-              // break when we find the first character that is part of the base64 alphabet
-              // this is because we start from the end of the string
-              const char c = reinterpret_cast<const char*>(ReceptionBuffer)[Base64String.Len() - EndBuffer - 1];
-              if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-                || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r'))
-              {
-                break;
-              }
-            }
-
-            // Decode the Base64 String
-            // we need to remove the last 6 characters, because they are not part of the base64 string
-            // this is because the base64 string is padded with 6 characters
-            if (!FBase64::Decode(reinterpret_cast<const ANSICHAR*>(ReceptionBuffer), ReceptionBufferSize - EndBuffer, OutputBuffer))
-            {
-              UE_LOG(LogTemp, Warning, TEXT("Could not decode base64 string"));
-              // for debug purposes, we write the first 20 letters of the string onto log
-              //UE_LOG(LogTemp, Warning, TEXT("First 20 letters of string: %s"), *Base64String.Left(20));
-              //UE_LOG(LogTemp, Warning, TEXT("Last 20 letters of string: %s"), *Base64String.Right(20));
-              SendError("Could not decode base64 string");
-              return;
-            }
-            else
-            {
-              SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%d}"), *name, ReceptionBufferSize));
-            }
-
-            //DecodeBase64InPlace(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize, OutputBuffer);
-            name = Jason->GetStringField("stop");
-            SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name));
           }
-        }
-        else
-        {
-          SendError("buffer request needs start or stop field");
-          return;
+
+          // Decode the Base64 String
+          // we need to remove the last 6 characters, because they are not part of the base64 string
+          // this is because the base64 string is padded with 6 characters
+          if (!FBase64::Decode(reinterpret_cast<const ANSICHAR*>(ReceptionBuffer), ReceptionBufferSize - EndBuffer, OutputBuffer))
+          {
+            UE_LOG(LogTemp, Warning, TEXT("Could not decode base64 string"));
+            // for debug purposes, we write the first 20 letters of the string onto log
+            //UE_LOG(LogTemp, Warning, TEXT("First 20 letters of string: %s"), *Base64String.Left(20));
+            //UE_LOG(LogTemp, Warning, TEXT("Last 20 letters of string: %s"), *Base64String.Right(20));
+            SendError("Could not decode base64 string");
+            return;
+          }
+          name = Jason->GetStringField("stop");
+          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize));
+          //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name));
         }
       }
-    }
-    else
-    {
-      UE_LOG(LogTemp, Warning, TEXT("No type field in JSON"));
-      SendError("No type field in JSON");
+      else
+      {
+        SendError("buffer request needs start or stop field");
+        return;
+      }
     }
   }
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("No type field in JSON"));
+    SendError("No type field in JSON");
+  }
+}
   else
   {
     if (ReceptionName.IsEmpty())
@@ -622,7 +655,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       ReceptionBufferOffset += size;
       SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName));
     }
-  }
+    }
 }
 
 void ASynavisDrone::SendResponse(FString Descriptor)
@@ -1053,11 +1086,11 @@ FString ASynavisDrone::GetJSONFromObjectProperty(UObject* Object, FString Proper
       SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not vector, float, bool, or string\"}"));
       return TEXT("{}");
     }
-  }
+    }
   UE_LOG(LogTemp, Warning, TEXT("Property %s not found"), *PropertyName);
   SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not found\"}"));
   return TEXT("{}");
-}
+  }
 
 const bool ASynavisDrone::IsInEditor() const
 {
@@ -1310,7 +1343,7 @@ void ASynavisDrone::EndPlay(const EEndPlayReason::Type EndPlayReason)
   Super::EndPlay(EndPlayReason);
   if (WorldSpawner)
   {
-       WorldSpawner->ReceiveStreamingCommunicatorRef(nullptr);
+    WorldSpawner->ReceiveStreamingCommunicatorRef(nullptr);
   }
   SendResponse(FString("{\"type\":\"closed\""));
 

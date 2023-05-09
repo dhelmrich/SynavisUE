@@ -306,7 +306,7 @@ UTexture2D* AWorldSpawner::CreateTexture2DFromData(TArray<uint8> Data, int Width
 {
   UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
   Texture->UpdateResource();
-  FTexture2DMipMap& Mip = Texture->PlatformData->Mips[0];
+  FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
   void* DataPtr = Mip.BulkData.Lock(LOCK_READ_WRITE);
   FMemory::Memcpy(DataPtr, Data.GetData(), Data.Num());
   Mip.BulkData.Unlock();
@@ -346,9 +346,10 @@ FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
       if(Class->IsChildOf(UActorComponent::StaticClass()))
       {
         Spawned = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
-        USceneComponent* Component = NewObject<USceneComponent>(Class);
-        Component->RegisterComponent();
+        USceneComponent* Component = NewObject<USceneComponent>(Spawned, Class);
         Spawned->AddInstanceComponent(Component);
+        Spawned->SetRootComponent(Component);
+        Component->RegisterComponent();
         HeldActor = Spawned;
         HeldComponent = Component;
       }
