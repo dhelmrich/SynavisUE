@@ -32,6 +32,7 @@
 #include "Engine/SkyLight.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkyLightComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 THIRD_PARTY_INCLUDES_START
 #include <limits>
@@ -51,6 +52,53 @@ inline float GetColor(const FColor& c, uint32 i)
   case 3:
     return c.A;
   }
+}
+
+
+inline FString GetStringFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, const FString& Default)
+{
+  if (Json->HasTypedField<EJson::String>(Field))
+  {
+    return Json->GetStringField(Field);
+  }
+  return Default;
+}
+
+inline int32 GetIntFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, int32 Default)
+{
+  if (Json->HasTypedField<EJson::Number>(Field))
+  {
+    return Json->GetIntegerField(Field);
+  }
+  return Default;
+}
+
+inline double GetDoubleFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, double Default)
+{
+  if (Json->HasTypedField<EJson::Number>(Field))
+  {
+    return Json->GetNumberField(Field);
+  }
+  return Default;
+}
+
+void ASynavisDrone::AppendToMesh(TSharedPtr<FJsonObject> Jason)
+{
+  auto* Object = this->GetObjectFromJSON(Jason);
+  AActor* Actor = Cast<AActor>(Object);
+  if (!Actor)
+  {
+    return;
+  }
+  auto procmesh = Actor->FindComponentByClass<UProceduralMeshComponent>();
+  if (!procmesh)
+  {
+    procmesh = NewObject<UProceduralMeshComponent>(Actor);
+    procmesh->RegisterComponent();
+    procmesh->AttachToComponent(Actor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+  }
+  int section = GetIntFieldOr(Jason, "section", procmesh->GetNumSections());
+  procmesh->CreateMeshSection(section, Points, Triangles, Normals, UVs, {}, Tangents, false);
 }
 
 void ASynavisDrone::ParseInput(FString Descriptor)
@@ -95,7 +143,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         // Here we prompt the World Spawner to create a new geometry container
         WorldSpawner->SpawnObject(Jason);
       }
-      else if (type == "directbase64")
+      else if (type == "directbase64" || type == "appendbase64")
       {
         FBase64 Base64;
         // this is the direct transmission of the geometry
@@ -133,7 +181,6 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         }
         // allocate the destination buffer
         Dest.SetNumUninitialized(MaxSize);
-
         // get the json property for the points
         auto points = Jason->GetStringField("points");
         // decode the base64 string
@@ -142,17 +189,17 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         Points.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
         FMemory::Memcpy(Points.GetData(), Dest.GetData(), Dest.Num());
         auto normals = Jason->GetStringField("normals");
-        Dest.Reset();
+        Dest.Reset(MaxSize);
         Base64.Decode(normals, Dest);
         Normals.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
         FMemory::Memcpy(Normals.GetData(), Dest.GetData(), Dest.Num());
         auto triangles = Jason->GetStringField("triangles");
-        Dest.Reset();
+        Dest.Reset(MaxSize);
         Base64.Decode(triangles, Dest);
         Triangles.SetNumUninitialized(Dest.Num() / sizeof(int), true);
         FMemory::Memcpy(Triangles.GetData(), Dest.GetData(), Dest.Num());
         UVs.Reset();
-        Dest.Reset();
+        Dest.Reset(MaxSize);
         if (Jason->HasField("texcoords"))
         {
           auto uvs = Jason->GetStringField("texcoords");
@@ -204,11 +251,18 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             Tangents[p] = FProcMeshTangent(TangentX, false);
           }
         }
-        WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, Scalars, 0.0, 1.0, UVs, Tangents);
+        if(type == "appendbase64")
+        {
+          AppendToMesh(Jason);
+        }
+        else
+        {
+          WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, Scalars, 0.0, 1.0, UVs, Tangents);
+        }
       }
       else if (type == "parameter")
       {
-        auto* Target = this->GetObjectFromJSON(Jason.Get());
+        auto* Target = this->GetObjectFromJSON(Jason);
         ApplyJSONToObject(Target, Jason.Get());
       }
       else if (type == "query")
@@ -271,7 +325,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         }
         else if (Jason->HasField("property"))
         {
-          auto* Target = this->GetObjectFromJSON(Jason.Get());
+          auto* Target = this->GetObjectFromJSON(Jason);
           if (Target != nullptr)
           {
             FString Name = Target->GetName();
@@ -283,7 +337,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         }
         else
         {
-          auto* Target = this->GetObjectFromJSON(Jason.Get());
+          auto* Target = this->GetObjectFromJSON(Jason);
           if (Target != nullptr)
           {
             FString Name = Target->GetName();
@@ -306,7 +360,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         {
           FString ObjectName = Jason->GetStringField("object");
           FString PropertyName = Jason->GetStringField("property");
-          auto Object = this->GetObjectFromJSON(Jason.Get());
+          auto Object = this->GetObjectFromJSON(Jason);
           if (!Object)
           {
             SendError("track request object not found");
@@ -358,7 +412,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         {
           FString ObjectName = Jason->GetStringField("object");
           FString PropertyName = Jason->GetStringField("property");
-          auto Object = this->GetObjectFromJSON(Jason.Get());
+          auto Object = this->GetObjectFromJSON(Jason);
           if (!Object)
           {
             SendError("untrack request object not found");
@@ -396,6 +450,22 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         {
           float frametime = GetWorld()->GetDeltaSeconds();
           FString message = FString::Printf(TEXT("{\"type\":\"frametime\",\"value\":%f}"), frametime);
+        }
+        else if (Name == "cam")
+        {
+          FString CameraToSwitchTo = Jason->GetStringField("camera");
+          if (CameraToSwitchTo == "info")
+          {
+            OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToInfoCam);
+          }
+          else if (CameraToSwitchTo == "scene")
+          {
+            OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToSceneCam);
+          }
+          else if (CameraToSwitchTo == "dual")
+          {
+            OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToBothCams);
+          }
         }
       }
       else if (type == "info")
@@ -443,6 +513,14 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           LoadFromJSON(Message);
         }
       }
+      else if (type == "append")
+      {
+        if (Jason->HasField("object"))
+        {
+          UE_LOG(LogTemp, Warning, TEXT("Request to append geometry to object"));
+          AppendToMesh(Jason);
+        }
+      }
       else if (type == "spawn")
       {
         if (Jason->HasField("object") && Jason->GetStringField("object") == "ProceduralMeshComponent")
@@ -456,7 +534,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           auto name = this->WorldSpawner->SpawnObject(Jason);
           UProceduralMeshComponent* Mesh = Cast<UProceduralMeshComponent>(WorldSpawner->GetHeldComponent());
           TArray<FColor> Colors;
-          if(Scalars.Num() == Points.Num())
+          if (Scalars.Num() == Points.Num())
           {
             // we have scalars, so we need to convert them to colors
             // just as an example, we use a bluered
@@ -483,104 +561,70 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             }
           }
           Mesh->CreateMeshSection(section_index, Points, Triangles, Normals, UVs, Colors, Tangents, true);
-      }
-      else if (this->WorldSpawner)
-      {
-        auto name = this->WorldSpawner->SpawnObject(Jason);
-        SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name));
-      }
-      else
-      {
-        UE_LOG(LogTemp, Warning, TEXT("No world spawner available"));
-        SendError("No world spawner available");
-      }
-    }
-    else if (type == "buffer")
-    {
-      FString name;
-      if (Jason->HasField("start") && Jason->HasField("size") && Jason->HasField("format"))
-      {
-
-        name = Jason->GetStringField("start");
-        auto Format = Jason->GetStringField("format");
-        auto size = Jason->GetIntegerField("size");
-        ReceptionBufferSize = size;
-        ReceptionFormat = Format;
-        ReceptionName = name;
-        ReceptionBufferOffset = 0;
-        // if the format is binary, we do not need to do anything
-        // if the format is base64, we need to decode the data and allocate a buffer
-        if (Format == "base64")
-        {
-          ReceptionBuffer = new uint8[size];
         }
-        else if (ReceptionName == "points")
+        else if (this->WorldSpawner)
         {
-          Points.SetNum(size / sizeof(FVector));
-          ReceptionBuffer = reinterpret_cast<uint8*>(Points.GetData());
-        }
-        else if (ReceptionName == "normals")
-        {
-          Points.SetNum(size / sizeof(FVector));
-          ReceptionBuffer = reinterpret_cast<uint8*>(Normals.GetData());
-        }
-        else if (ReceptionName == "triangles")
-        {
-          ReceptionBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
-        }
-        else if (ReceptionName == "uvs")
-        {
-          ReceptionBuffer = reinterpret_cast<uint8*>(UVs.GetData());
+          auto name = this->WorldSpawner->SpawnObject(Jason);
+          SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name));
         }
         else
         {
-          UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
-          SendError("Unknown buffer name");
-          return;
+          UE_LOG(LogTemp, Warning, TEXT("No world spawner available"));
+          SendError("No world spawner available");
         }
-        SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name));
       }
-      else if (Jason->HasField("stop"))
+      else if (type == "texture")
       {
-        // compute the size of the output buffer
-        auto OutputSize = GetDecodedSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
 
-        uint8* OutputBuffer = nullptr;
-        // if we got a base64 buffer, we need to decode it
-        if (ReceptionFormat == "base64")
+        FString TexData = GetStringFieldOr(Jason, "data", "");
+        // check if the transmission is direct
+        if (!TexData.IsEmpty())
         {
-          if (ReceptionName == "points")
+          auto size = FBase64::GetDecodedDataSize(TexData);
+          ReceptionBuffer = new uint8[size];
+          FBase64::Decode(*TexData, size, ReceptionBuffer);
+          ApplyOrStoreTexture(Jason);
+        }
+      }
+      else if (type == "buffer")
+      {
+        FString name;
+        if (Jason->HasField("start") && Jason->HasField("size") && Jason->HasField("format"))
+        {
+
+          name = Jason->GetStringField("start");
+          auto Format = Jason->GetStringField("format");
+          auto size = Jason->GetIntegerField("size");
+          ReceptionBufferSize = size;
+          ReceptionFormat = Format;
+          ReceptionName = name;
+          ReceptionBufferOffset = 0;
+          // if the format is binary, we do not need to do anything
+          // if the format is base64, we need to decode the data and allocate a buffer
+          if (Format == "base64")
           {
-            Points.SetNum(OutputSize / sizeof(FVector));
-            OutputBuffer = reinterpret_cast<uint8*>(Points.GetData());
+            ReceptionBuffer = new uint8[size];
+          }
+          else if (ReceptionName == "points")
+          {
+            Points.SetNum(size / sizeof(FVector));
+            ReceptionBuffer = reinterpret_cast<uint8*>(Points.GetData());
           }
           else if (ReceptionName == "normals")
           {
-            Normals.SetNum(OutputSize / sizeof(FVector));
-            OutputBuffer = reinterpret_cast<uint8*>(Normals.GetData());
+            Points.SetNum(size / sizeof(FVector));
+            ReceptionBuffer = reinterpret_cast<uint8*>(Normals.GetData());
           }
           else if (ReceptionName == "triangles")
           {
-            Triangles.SetNum(OutputSize / sizeof(int32));
-            OutputBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
+            ReceptionBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
           }
           else if (ReceptionName == "uvs")
           {
-            UVs.SetNum(OutputSize / sizeof(FVector2D));
-            OutputBuffer = reinterpret_cast<uint8*>(UVs.GetData());
+            ReceptionBuffer = reinterpret_cast<uint8*>(UVs.GetData());
           }
-          else if (ReceptionName == "tangents")
+          else if (ReceptionName == "texture")
           {
-            // here we need to allocate a buffer for the tangents with FVector
-            // This is because we do not transmit the fourth component of the tangent
-            Tangents.SetNum(OutputSize / sizeof(FVector));
-            // parse the vectors into new FProcMeshTangents and copy them into the array
-            float* TangentData = reinterpret_cast<float*>(ReceptionBuffer);
-            for (int i = 0; i < OutputSize / sizeof(FVector); i++)
-            {
-              Tangents[i].TangentX = FVector(TangentData[i * 3], TangentData[i * 3 + 1], TangentData[i * 3 + 2]);
-              Tangents[i].bFlipTangentY = false;
-            }
           }
           else
           {
@@ -588,55 +632,115 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             SendError("Unknown buffer name");
             return;
           }
+          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name));
+        }
+        else if (Jason->HasField("stop"))
+        {
+          // compute the size of the output buffer
+          auto OutputSize = GetDecodedSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
 
-          // use built-in unreal functions as long as the in-place decoding does not work
-          // Create FString from Reception Buffer
-
-          int32_t EndBuffer = 0;
-          // find the end of the base64 string by searching for the first occurence of a non-base64 character
-          for (; EndBuffer < ReceptionBufferSize; EndBuffer++)
+          uint8* OutputBuffer = nullptr;
+          // if we got a base64 buffer, we need to decode it
+          if (ReceptionFormat == "base64")
           {
-            // manually check the character against the base64 alphabet
-            // break when we find the first character that is part of the base64 alphabet
-            // this is because we start from the end of the string
-            const char c = reinterpret_cast<const char*>(ReceptionBuffer)[ReceptionBufferSize - EndBuffer - 1];
-            if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-              || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r'))
+            if (ReceptionName == "points")
             {
-              break;
+              Points.SetNum(OutputSize / sizeof(FVector));
+              OutputBuffer = reinterpret_cast<uint8*>(Points.GetData());
             }
-          }
+            else if (ReceptionName == "normals")
+            {
+              Normals.SetNum(OutputSize / sizeof(FVector));
+              OutputBuffer = reinterpret_cast<uint8*>(Normals.GetData());
+            }
+            else if (ReceptionName == "triangles")
+            {
+              Triangles.SetNum(OutputSize / sizeof(int32));
+              OutputBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
+            }
+            else if (ReceptionName == "uvs")
+            {
+              UVs.SetNum(OutputSize / sizeof(FVector2D));
+              OutputBuffer = reinterpret_cast<uint8*>(UVs.GetData());
+            }
+            else if (ReceptionName == "tangents")
+            {
+              // here we need to allocate a buffer for the tangents with FVector
+              // This is because we do not transmit the fourth component of the tangent
+              Tangents.SetNum(OutputSize / sizeof(FVector));
+              // parse the vectors into new FProcMeshTangents and copy them into the array
+              float* TangentData = reinterpret_cast<float*>(ReceptionBuffer);
+              for (int i = 0; i < OutputSize / sizeof(FVector); i++)
+              {
+                Tangents[i].TangentX = FVector(TangentData[i * 3], TangentData[i * 3 + 1], TangentData[i * 3 + 2]);
+                Tangents[i].bFlipTangentY = false;
+              }
+            }
+            else if (ReceptionName == "texture")
+            {
+              OutputBuffer = new uint8[OutputSize];
+            }
+            else
+            {
+              UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
+              SendError("Unknown buffer name");
+              return;
+            }
 
-          // Decode the Base64 String
-          // we need to remove the last 6 characters, because they are not part of the base64 string
-          // this is because the base64 string is padded with 6 characters
-          if (!FBase64::Decode(reinterpret_cast<const ANSICHAR*>(ReceptionBuffer), ReceptionBufferSize - EndBuffer, OutputBuffer))
-          {
-            UE_LOG(LogTemp, Warning, TEXT("Could not decode base64 string"));
-            // for debug purposes, we write the first 20 letters of the string onto log
-            //UE_LOG(LogTemp, Warning, TEXT("First 20 letters of string: %s"), *Base64String.Left(20));
-            //UE_LOG(LogTemp, Warning, TEXT("Last 20 letters of string: %s"), *Base64String.Right(20));
-            SendError("Could not decode base64 string");
-            return;
+            // use built-in unreal functions as long as the in-place decoding does not work
+            // Create FString from Reception Buffer
+
+            int32_t EndBuffer = 0;
+            // find the end of the base64 string by searching for the first occurence of a non-base64 character
+            for (; EndBuffer < ReceptionBufferSize; EndBuffer++)
+            {
+              // manually check the character against the base64 alphabet
+              // break when we find the first character that is part of the base64 alphabet
+              // this is because we start from the end of the string
+              const char c = reinterpret_cast<const char*>(ReceptionBuffer)[ReceptionBufferSize - EndBuffer - 1];
+              if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r'))
+              {
+                break;
+              }
+            }
+
+            // Decode the Base64 String
+            // we need to remove the last 6 characters, because they are not part of the base64 string
+            // this is because the base64 string is padded with 6 characters
+            if (!FBase64::Decode(reinterpret_cast<const ANSICHAR*>(ReceptionBuffer), ReceptionBufferSize - EndBuffer, OutputBuffer))
+            {
+              UE_LOG(LogTemp, Warning, TEXT("Could not decode base64 string"));
+              // for debug purposes, we write the first 20 letters of the string onto log
+              //UE_LOG(LogTemp, Warning, TEXT("First 20 letters of string: %s"), *Base64String.Left(20));
+              //UE_LOG(LogTemp, Warning, TEXT("Last 20 letters of string: %s"), *Base64String.Right(20));
+              SendError("Could not decode base64 string");
+              return;
+            }
+            delete[] ReceptionBuffer;
+            ReceptionBuffer = OutputBuffer;
+            name = Jason->GetStringField("stop");
+            SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize));
+            if (ReceptionName == "texture")
+            {
+              ApplyOrStoreTexture(Jason);
+            }
+            //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name));
           }
-          name = Jason->GetStringField("stop");
-          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize));
-          //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name));
+        }
+        else
+        {
+          SendError("buffer request needs start or stop field");
+          return;
         }
       }
-      else
-      {
-        SendError("buffer request needs start or stop field");
-        return;
-      }
+    }
+    else
+    {
+      UE_LOG(LogTemp, Warning, TEXT("No type field in JSON"));
+      SendError("No type field in JSON");
     }
   }
-  else
-  {
-    UE_LOG(LogTemp, Warning, TEXT("No type field in JSON"));
-    SendError("No type field in JSON");
-  }
-}
   else
   {
     if (ReceptionName.IsEmpty())
@@ -655,7 +759,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       ReceptionBufferOffset += size;
       SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName));
     }
-    }
+  }
 }
 
 void ASynavisDrone::SendResponse(FString Descriptor)
@@ -833,6 +937,7 @@ FTransform ASynavisDrone::FindGoodTransformBelowDrone()
   FHitResult Hit;
   FVector Start = GetActorLocation();
   FVector End = Start - FVector(0, 0, 1000);
+  Output.SetRotation(UKismetMathLibrary::RotatorFromAxisAndAngle({0,0,1}, FGenericPlatformMath::FRand() * 360.f).Quaternion());
   if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECollisionChannel::ECC_WorldStatic, ParamsTrace))
   {
     Output.SetLocation(Hit.ImpactPoint);
@@ -952,11 +1057,11 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
   else
   {
     UE_LOG(LogTemp, Warning, TEXT("Property %s not found"), *Name);
-    SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not found\"}"));
+    SendResponse(FString::Printf(TEXT("{\"type\":\"error\",\"message\":\"Property not found\", \"properties\":%s}"), *ListObjectPropertiesAsJSON(Object)));
   }
 }
 
-UObject* ASynavisDrone::GetObjectFromJSON(FJsonObject* JSON)
+UObject* ASynavisDrone::GetObjectFromJSON(TSharedPtr<FJsonObject> JSON)
 {
   FString Name = JSON->GetStringField("object");
   TArray<AActor*> FoundActors;
@@ -1086,11 +1191,22 @@ FString ASynavisDrone::GetJSONFromObjectProperty(UObject* Object, FString Proper
       SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not vector, float, bool, or string\"}"));
       return TEXT("{}");
     }
-    }
+  }
   UE_LOG(LogTemp, Warning, TEXT("Property %s not found"), *PropertyName);
   SendResponse(TEXT("{\"type\":\"error\",\"message\":\"Property not found\"}"));
   return TEXT("{}");
+}
+
+void ASynavisDrone::UpdateCamera()
+{
+  if (CallibratedPostprocess)
+  {
+    CallibratedPostprocess->SetScalarParameterValue(TEXT("DistanceScale"), DistanceScale);
+    CallibratedPostprocess->SetScalarParameterValue(TEXT("BlackDistance"), BlackDistance);
+    CallibratedPostprocess->SetScalarParameterValue(TEXT("Mode"), (float)RenderMode);
+    CallibratedPostprocess->SetVectorParameterValue(TEXT("BinScale"), (FLinearColor)BinScale);
   }
+}
 
 const bool ASynavisDrone::IsInEditor() const
 {
@@ -1323,6 +1439,44 @@ EDataTypeIndicator ASynavisDrone::FindType(FProperty* Property)
   return EDataTypeIndicator::None;
 }
 
+void ASynavisDrone::ApplyOrStoreTexture(TSharedPtr<FJsonObject> Json)
+{
+
+  // require fields: dimension, name, format
+  // optional fields: data
+  int x, y;
+  TSharedPtr<FJsonObject> dimension = Json->GetObjectField("dimension");
+  x = dimension->GetIntegerField("x");
+  y = dimension->GetIntegerField("y");
+  FString format = GetStringFieldOr(Json, "format", "RGBA8");
+  FString target = GetStringFieldOr(Json, "target", "Diffuse");
+  FString name = Json->GetStringField("name");
+  UTexture2D* Texture = WorldSpawner->CreateTexture2DFromData(ReceptionBuffer, this->ReceptionBufferSize, x, y);
+  UMaterialInstanceDynamic* MatInst = WorldSpawner->GenerateInstanceFromName(name, false);
+  MatInst->SetTextureParameterValue(*target, Texture);
+
+  if (Json->HasField("object"))
+  {
+    auto object = GetObjectFromJSON(Json);
+    const int index = GetIntFieldOr(Json, "index", 0);
+    UPrimitiveComponent* MaterialCarryingIdentity;
+    if (object->IsA<AActor>())
+    {
+      MaterialCarryingIdentity = Cast<UPrimitiveComponent>(Cast<AActor>(object)->FindComponentByClass(UPrimitiveComponent::StaticClass()));
+    }
+    else if (object->IsA<UPrimitiveComponent>())
+    {
+      MaterialCarryingIdentity = Cast<UPrimitiveComponent>(object);
+    }
+    else
+    {
+      return;
+    }
+    MaterialCarryingIdentity->SetMaterial(index, MatInst);
+  }
+
+}
+
 void ASynavisDrone::EnsureDistancePreservation()
 {
   TArray<FHitResult> MHits;
@@ -1406,7 +1560,11 @@ void ASynavisDrone::Tick(float DeltaTime)
   }
   if (TransmissionTargets.Num() > 0)
   {
-    FString Data = TEXT("{\"type\":\"track\",\"data\":{");
+    // rtp timestamp has only 32 bits
+    const auto Now = static_cast<uint32>(FDateTime::UtcNow().ToUnixTimestamp());
+
+
+    FString Data = FString::Printf(TEXT("{\"type\":\"track\",\"time\":%n,\"data\":{"), Now);
 
     for (auto i = 0; i < TransmissionTargets.Num(); ++i)
     {

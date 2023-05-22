@@ -21,7 +21,8 @@ struct FObjectSpawnInstance
 };
 
 class UProceduralMeshComponent;
-class UDynamicMaterialInstance;
+class UMaterial;
+class UMaterialInstanceDynamic;
 struct FStreamableHandle;
 
 UCLASS()
@@ -34,8 +35,9 @@ public:
 	AWorldSpawner();
 
 	UFUNCTION(BlueprintCallable, Category = "Field", meta = (AutoCreateRefTerm = "Tangents, TexCoords"))
-		void SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Normals, TArray<int> Triangles, TArray<float> Scalars, float Min, float Max,
-		           TArray<FVector2D> TexCoords, TArray<FProcMeshTangent> Tangents);
+		void SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Normals, TArray<int> Triangles,
+		            TArray<float> Scalars, float Min, float Max,
+		            TArray<FVector2D> TexCoords, TArray<FProcMeshTangent> Tangents);
 
 	UPROPERTY()
   class UPrimitiveComponent* CropField;
@@ -62,13 +64,16 @@ public:
 	UFUNCTION()
 	USceneComponent* GetHeldComponent() { return this->HeldComponent; }
 
+	//FString GetUniqueName(FString BaseName);
+	
+	UPROPERTY()
 	TArray<USceneComponent*> SubComponents;
 
 	// a function that returns a StaticClass from a name
 	UClass* GetClassFromName(FString ClassName);
 
-	UTexture2D* CreateTexture2DFromData(TArray<uint8> Data, int Width, int Height);
-	UDynamicMaterialInstance* GenerateInstanceFromName(FString InstanceName);
+	UTexture2D* CreateTexture2DFromData(uint8* Data, uint64 Size, int Width, int Height);
+	UMaterialInstanceDynamic* GenerateInstanceFromName(FString InstanceName, bool NewOnly = true);
 
 	// This function spawns a pre-registered object from a JSON description
 	// The description must contain a "ClassName" field that contains the name of the class to spawn
@@ -77,16 +82,19 @@ public:
 	FString SpawnObject(TSharedPtr<FJsonObject> Description);
 
 	//UPROPERTY(EditAnywhere, Category = "Field")
-  TMap<FString, UDynamicMaterialInstance*> MaterialInstances;
+	UPROPERTY()
+  TMap<FString, UMaterialInstanceDynamic*> MaterialInstances;
 
 	void ReceiveStreamingCommunicatorRef(ASynavisDrone* inDroneRef);
+
 
 	const FJsonObject* GetAssetCacheTemp() const {return AssetCache.Get();}
 
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
-
+	
+	UPROPERTY()
   ASynavisDrone* DroneRef;
 	void MessageToClient(FString Message);
 
@@ -94,8 +102,15 @@ protected:
 
 	TArray<TSharedPtr<FStreamableHandle>> StreamableHandles;
 
+	UPROPERTY()
 	AActor* HeldActor;
+	UPROPERTY()
 	USceneComponent* HeldComponent;
+
+	
+
+	UPROPERTY()
+	UMaterial* DefaultMaterial;
 
 public:	
 	// Called every frame

@@ -130,9 +130,11 @@ public:
   void ApplyJSONToObject(UObject* Object, FJsonObject *JSON);
 
 	
-  UObject* GetObjectFromJSON(FJsonObject *JSON);
+  UObject* GetObjectFromJSON(TSharedPtr<FJsonObject> JSON);
 
 	FString GetJSONFromObjectProperty(UObject* Object, FString PropertyName);
+
+	void AppendToMesh(TSharedPtr<FJsonObject> Jason);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Actor")
 		USceneComponent* CoordinateSource;
@@ -226,6 +228,9 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Network")
     UPixelStreamingInput* RemoteInput;
 
+	UFUNCTION(BlueprintCallable, Category = "View")
+	  void UpdateCamera();
+
 	UFUNCTION(BlueprintCallable, Category = "Network")
 		const bool IsInEditor() const;
 		
@@ -249,7 +254,9 @@ protected:
 	virtual void PostInitializeComponents() override;
 	EDataTypeIndicator FindType(FProperty* Property);
 
-	AWorldSpawner* WorldSpawner;
+  void ApplyOrStoreTexture(TSharedPtr<FJsonObject> Json);
+
+  AWorldSpawner* WorldSpawner;
 
 	FVector NextLocation;
 	FVector Velocity;

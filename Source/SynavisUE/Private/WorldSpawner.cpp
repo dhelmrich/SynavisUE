@@ -217,13 +217,23 @@ AWorldSpawner::AWorldSpawner()
     AssetObject->SetStringField("SearchType", "Material");
     AssetCache->SetObjectField(Asset.AssetName.ToString(), AssetObject);
   }
+
+  static ConstructorHelpers::FObjectFinder<UMaterial> DefaultMaterialAsset(TEXT("/Script/Engine.Material'/SynavisUE/StandardMaterial.StandardMaterial'"));
+  if (DefaultMaterialAsset.Succeeded())
+  {
+    DefaultMaterial = DefaultMaterialAsset.Object;
+  }
+  else
+  {
+    UE_LOG(LogInit, Error, TEXT("Could not find default material"));
+  }
 }
 
 void AWorldSpawner::SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Normals, TArray<int> Triangles,
   TArray<float> Scalars, float Min, float Max, TArray<FVector2D> TexCoords, TArray<FProcMeshTangent> Tangents)
 {
   AActor* Actor = GetWorld()->SpawnActor<AActor>();
-  
+
   const auto trans = DroneRef->FindGoodTransformBelowDrone();
   Actor->SetActorTransform(trans);
   UProceduralMeshComponent* mesh = NewObject<UProceduralMeshComponent>(this);
@@ -257,10 +267,10 @@ void AWorldSpawner::ReceiveStreamingCommunicatorRef()
   // I need to find a smarter way of removing the handles from the array
   decltype(StreamableHandles) HandlesToRelease;
   // Go through present streaming handles
-  for(auto & StreamingHandle : StreamableHandles)
+  for (auto& StreamingHandle : StreamableHandles)
   {
     // If the handle is valid
-    if(StreamingHandle.IsValid() && StreamingHandle->HasLoadCompleted())
+    if (StreamingHandle.IsValid() && StreamingHandle->HasLoadCompleted())
     {
       // spawn the object
       auto asset = StreamingHandle->GetLoadedAsset();
@@ -271,7 +281,7 @@ void AWorldSpawner::ReceiveStreamingCommunicatorRef()
   }
   StreamableHandles.RemoveAll([&HandlesToRelease](const TSharedPtr<FStreamableHandle>& Handle)
   {
-     return HandlesToRelease.Contains(Handle);
+    return HandlesToRelease.Contains(Handle);
   });
 }
 
@@ -291,7 +301,6 @@ FString AWorldSpawner::PrepareContainerGeometry(TSharedPtr<FJsonObject> Descript
   return Result;
 }
 
-
 UClass* AWorldSpawner::GetClassFromName(FString ClassName)
 {
   UClass* Class = ClassMap.FindRef(ClassName);
@@ -302,21 +311,53 @@ UClass* AWorldSpawner::GetClassFromName(FString ClassName)
   return Class;
 }
 
-UTexture2D* AWorldSpawner::CreateTexture2DFromData(TArray<uint8> Data, int Width, int Height)
+UTexture2D* AWorldSpawner::CreateTexture2DFromData(uint8* Data, uint64 Size, int Width, int Height)
 {
   UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
-  Texture->UpdateResource();
-  FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
-  void* DataPtr = Mip.BulkData.Lock(LOCK_READ_WRITE);
-  FMemory::Memcpy(DataPtr, Data.GetData(), Data.Num());
-  Mip.BulkData.Unlock();
+  Texture->AddToRoot();
+
+  auto* PlatformData = new FTexturePlatformData();
+  Texture->SetPlatformData(PlatformData);
+  PlatformData->SizeX = Width;
+  PlatformData->SizeY = Height;
+  PlatformData->PixelFormat = EPixelFormat::PF_B8G8R8A8;
+  PlatformData->SetNumSlices(1);
+
+  FTexture2DMipMap* Mip = new FTexture2DMipMap();
+  PlatformData->Mips.Add(Mip);
+  Mip->SizeX = Width;
+  Mip->SizeY = Height;
+
+  void* DataPtr = Mip->BulkData.Lock(LOCK_READ_WRITE);
+  FMemory::Memcpy(DataPtr, Data, Size);
+  Mip->BulkData.Unlock();
+
+  Texture->Source.Init(Width, Height, 1, 1, ETextureSourceFormat::TSF_BGRA8, Data);
+
   Texture->UpdateResource();
   return Texture;
 }
 
-UDynamicMaterialInstance* AWorldSpawner::GenerateInstanceFromName(FString InstanceName)
+UMaterialInstanceDynamic* AWorldSpawner::GenerateInstanceFromName(FString InstanceName, bool NewOnly)
 {
-  return nullptr;
+  UMaterialInstanceDynamic* MaterialInstance = nullptr;
+  if (MaterialInstances.Contains(InstanceName) && !NewOnly)
+  {
+    MaterialInstance = MaterialInstances.FindRef(InstanceName);
+  }
+  else if(MaterialInstances.Contains(InstanceName) && NewOnly)
+  {
+    // create a new name
+    FString NewName = InstanceName + FString::FromInt(MaterialInstances.Num());
+    MaterialInstance = UMaterialInstanceDynamic::Create(DefaultMaterial, this);
+    MaterialInstances.Add(NewName, MaterialInstance);
+  }
+  else
+  {
+    MaterialInstance = UMaterialInstanceDynamic::Create(DefaultMaterial, this);
+    MaterialInstances.Add(InstanceName, MaterialInstance);
+  }
+  return MaterialInstance;
 }
 
 FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
@@ -343,7 +384,7 @@ FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
         UE_LOG(LogTemp, Error, TEXT("Class %s not found"), *ObjectName);
         return "";
       }
-      if(Class->IsChildOf(UActorComponent::StaticClass()))
+      if (Class->IsChildOf(UActorComponent::StaticClass()))
       {
         Spawned = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
         USceneComponent* Component = NewObject<USceneComponent>(Spawned, Class);
@@ -364,7 +405,7 @@ FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
         UE_LOG(LogTemp, Error, TEXT("Failed to spawn actor of class %s"), *ObjectName);
         return "";
       }
-      if(Description->HasField("parameters"))
+      if (Description->HasField("parameters"))
       {
         auto parameters = Description->GetObjectField("parameters");
         this->DroneRef->ApplyJSONToObject(Spawned, parameters.Get());
