@@ -789,6 +789,7 @@ ASynavisDrone::ASynavisDrone()
 
   // briefly construct the decoding alphabet
 
+#if PLATFORM_WINDOWS
   constexpr char Base64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   for (int32_t i = 0; i < 256; ++i)
   {
@@ -796,8 +797,9 @@ ASynavisDrone::ASynavisDrone()
   }
   for (int32_t i = 0; i < 64; ++i)
   {
-    Base64LookupTable[Base64Alphabet[i]] = i;
+    Base64LookupTable[static_cast<uint32>(Base64Alphabet[i])] = i;
   }
+#endif
 
   CoordinateSource = CreateDefaultSubobject<USceneComponent>(TEXT("Root Component"));
   RootComponent = CoordinateSource;
@@ -1235,7 +1237,7 @@ void ASynavisDrone::DecodeBase64InPlace(char* Source, int32_t Length, uint8* Des
     while (SourceIndex < Length && Bits < 24)
     {
       char SourceChar = Source[SourceIndex++];
-      uint8_t Value = Base64LookupTable[SourceChar];
+      uint8_t Value = Base64LookupTable[static_cast<uint32>(SourceChar)];
       if (Value != 0xFF)
       {
         Accumulator = (Accumulator << 6) | Value;

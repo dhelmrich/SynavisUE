@@ -30,6 +30,7 @@
 #include "Materials/MaterialExpressionTextureSampleParameter.h"
 #include "Materials/MaterialExpressionTextureObject.h"
 #include "Materials/MaterialExpressionTextureSampleParameter2DArray.h"
+#include "Engine/Texture2D.h"
 // Visual Components
 #include "Engine/ExponentialHeightFog.h"
 #include "Components/DecalComponent.h"
@@ -331,8 +332,6 @@ UTexture2D* AWorldSpawner::CreateTexture2DFromData(uint8* Data, uint64 Size, int
   void* DataPtr = Mip->BulkData.Lock(LOCK_READ_WRITE);
   FMemory::Memcpy(DataPtr, Data, Size);
   Mip->BulkData.Unlock();
-
-  Texture->Source.Init(Width, Height, 1, 1, ETextureSourceFormat::TSF_BGRA8, Data);
 
   Texture->UpdateResource();
   return Texture;
