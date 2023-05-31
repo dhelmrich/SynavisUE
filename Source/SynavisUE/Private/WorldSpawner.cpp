@@ -180,44 +180,7 @@ AWorldSpawner::AWorldSpawner()
   PrimaryActorTick.bCanEverTick = true;
   CropField = CreateDefaultSubobject<UBoxComponent>(TEXT("Space Bounds"));
 
-  // Retrieve list of assets
-  // >5.1 version of this code adapted from https://kantandev.com/articles/finding-all-classes-blueprints-with-a-given-base
-  FAssetRegistryModule* AssetRegistryModule = &FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-  IAssetRegistry& AssetRegistry = AssetRegistryModule->Get();
-  TArray<FString> ContentPaths;
-  ContentPaths.Add(TEXT("/Game"));
-  ContentPaths.Add(TEXT("/Synavis"));
-  AssetRegistry.ScanPathsSynchronous(ContentPaths);
-  AssetCache = MakeShareable(new FJsonObject());
-  TSet<FTopLevelAssetPath> MeshAssetPaths;
-  TSet<FTopLevelAssetPath> MaterialAssetPaths;
-  FARFilter Filter;
-  Filter.ClassPaths.Add(UStaticMesh::StaticClass()->GetClassPathName());
-  Filter.bRecursiveClasses = true;
-  Filter.PackagePaths.Add(*ContentPaths[0]);
-  Filter.bRecursivePaths = true;
-  TArray<FAssetData> AssetList;
-  AssetRegistry.GetAssets(Filter, AssetList);
-  for (auto& Asset : AssetList)
-  {
-    TSharedPtr<FJsonObject> AssetObject = MakeShareable(new FJsonObject());
-    AssetObject->SetStringField("Package", Asset.PackagePath.ToString());
-    AssetObject->SetStringField("Type", Asset.AssetClassPath.ToString());
-    AssetObject->SetStringField("SearchType", "Mesh");
-    AssetCache->SetObjectField(Asset.AssetName.ToString(), AssetObject);
-  }
-  Filter.ClassPaths.Empty();
-  Filter.ClassPaths.Add(UMaterial::StaticClass()->GetClassPathName());
-  TArray<FAssetData> MaterialList;
-  AssetRegistry.GetAssets(Filter, MaterialList);
-  for (auto& Asset : MaterialList)
-  {
-    TSharedPtr<FJsonObject> AssetObject = MakeShareable(new FJsonObject());
-    AssetObject->SetStringField("Package", Asset.PackagePath.ToString());
-    AssetObject->SetStringField("Type", Asset.AssetClassPath.ToString());
-    AssetObject->SetStringField("SearchType", "Material");
-    AssetCache->SetObjectField(Asset.AssetName.ToString(), AssetObject);
-  }
+ 
 
   static ConstructorHelpers::FObjectFinder<UMaterial> DefaultMaterialAsset(TEXT("/Script/Engine.Material'/SynavisUE/StandardMaterial.StandardMaterial'"));
   if (DefaultMaterialAsset.Succeeded())
@@ -428,7 +391,44 @@ void AWorldSpawner::ReceiveStreamingCommunicatorRef(ASynavisDrone* inDroneRef)
 void AWorldSpawner::BeginPlay()
 {
   Super::BeginPlay();
-
+  // Retrieve list of assets
+ // >5.1 version of this code adapted from https://kantandev.com/articles/finding-all-classes-blueprints-with-a-given-base
+  FAssetRegistryModule* AssetRegistryModule = &FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+  IAssetRegistry& AssetRegistry = AssetRegistryModule->Get();
+  TArray<FString> ContentPaths;
+  ContentPaths.Add(TEXT("/Game"));
+  ContentPaths.Add(TEXT("/Synavis"));
+  AssetRegistry.ScanPathsSynchronous(ContentPaths);
+  AssetCache = MakeShareable(new FJsonObject());
+  TSet<FTopLevelAssetPath> MeshAssetPaths;
+  TSet<FTopLevelAssetPath> MaterialAssetPaths;
+  FARFilter Filter;
+  Filter.ClassPaths.Add(UStaticMesh::StaticClass()->GetClassPathName());
+  Filter.bRecursiveClasses = true;
+  Filter.PackagePaths.Add(*ContentPaths[0]);
+  Filter.bRecursivePaths = true;
+  TArray<FAssetData> AssetList;
+  AssetRegistry.GetAssets(Filter, AssetList);
+  for (auto& Asset : AssetList)
+  {
+    TSharedPtr<FJsonObject> AssetObject = MakeShareable(new FJsonObject());
+    AssetObject->SetStringField("Package", Asset.PackagePath.ToString());
+    AssetObject->SetStringField("Type", Asset.AssetClassPath.ToString());
+    AssetObject->SetStringField("SearchType", "Mesh");
+    AssetCache->SetObjectField(Asset.AssetName.ToString(), AssetObject);
+  }
+  Filter.ClassPaths.Empty();
+  Filter.ClassPaths.Add(UMaterial::StaticClass()->GetClassPathName());
+  TArray<FAssetData> MaterialList;
+  AssetRegistry.GetAssets(Filter, MaterialList);
+  for (auto& Asset : MaterialList)
+  {
+    TSharedPtr<FJsonObject> AssetObject = MakeShareable(new FJsonObject());
+    AssetObject->SetStringField("Package", Asset.PackagePath.ToString());
+    AssetObject->SetStringField("Type", Asset.AssetClassPath.ToString());
+    AssetObject->SetStringField("SearchType", "Material");
+    AssetCache->SetObjectField(Asset.AssetName.ToString(), AssetObject);
+  }
 }
 
 void AWorldSpawner::MessageToClient(FString Message)
