@@ -1519,7 +1519,7 @@ void ASynavisDrone::Tick(float DeltaTime)
   if (FGenericPlatformMath::Abs((Distance).Size()) < 50.f)
   {
     NextLocation = UKismetMathLibrary::RandomPointInBoundingBox(Flyspace->GetComponentLocation(), Flyspace->GetScaledBoxExtent());
-    if (GEngine && PrintScreenNewPosition)
+    if (IsInEditor() && PrintScreenNewPosition)
     {
       GEngine->AddOnScreenDebugMessage(10, 30.f, FColor::Red, FString::Printf(
         TEXT("L:(%d,%d,%d) - N:(%d,%d,%d) - M:%d/%d"), \

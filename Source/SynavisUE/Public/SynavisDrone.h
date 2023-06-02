@@ -217,7 +217,7 @@ public:
 	  float FlightProximityTriggerDistance = 10.f;
 
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Time")
-	  bool PrintScreenNewPosition = true;
+	  bool PrintScreenNewPosition = false;
 
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Time")
 	  float AutoExposureBias = 0.413f;

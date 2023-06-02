@@ -71,3 +71,4 @@ Plugins/*/Intermediate/*
 DerivedDataCache/*
 LocalDerivedDataCache/*
 
+*.b
