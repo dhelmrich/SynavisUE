@@ -456,14 +456,18 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           FString CameraToSwitchTo = Jason->GetStringField("camera");
           if (CameraToSwitchTo == "info")
           {
+            UE_LOG(LogActor, Warning, TEXT("Switching to info cam"));
             OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToInfoCam);
           }
           else if (CameraToSwitchTo == "scene")
           {
+            
+            UE_LOG(LogActor, Warning, TEXT("Switching to scene cam"));
             OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToSceneCam);
           }
           else if (CameraToSwitchTo == "dual")
           {
+            UE_LOG(LogActor, Warning, TEXT("Switching to dual cam"));
             OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToBothCams);
           }
         }
