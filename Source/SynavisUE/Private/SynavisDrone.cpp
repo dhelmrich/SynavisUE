@@ -471,6 +471,55 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToBothCams);
           }
         }
+        else if (Name == "ignore")
+        {
+          FString CameraToIgnore = Jason->GetStringField("camera");
+          USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
+          auto* Object = this->GetObjectFromJSON(Jason);
+          if (Object->IsA<AActor>())
+          {
+            // try get primitive component
+            auto* ActorObject = Cast<AActor>(Object);
+            SceneCapture->HideActorComponents(ActorObject, true);
+          }
+          else
+          {
+            // try get primitive component
+            auto* PrimitiveObject = Cast<UPrimitiveComponent>(Object);
+            if (PrimitiveObject)
+            {
+              SceneCapture->HideComponent(PrimitiveObject);
+            }
+          }
+        }
+        else if(Name == "Show")
+        {
+          FString CameraToIgnore = Jason->GetStringField("camera");
+          USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
+          auto* Object = this->GetObjectFromJSON(Jason);
+          if (Object->IsA<AActor>())
+          {
+            // try get primitive component
+            auto* ActorObject = Cast<AActor>(Object);
+            SceneCapture->ShowOnlyActorComponents(ActorObject, true);
+          }
+          else
+          {
+            // try get primitive component
+            auto* PrimitiveObject = Cast<UPrimitiveComponent>(Object);
+            if (PrimitiveObject)
+            {
+              SceneCapture->ShowOnlyComponent(PrimitiveObject);
+            }
+          }
+        }
+        else if(Name == "HideAll")
+        {
+          FString CameraToIgnore = Jason->GetStringField("camera");
+          bool Value = Jason->GetBoolField("value");
+          USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
+          SceneCapture->PrimitiveRenderMode = Value ? ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList : ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+        }
       }
       else if (type == "info")
       {
