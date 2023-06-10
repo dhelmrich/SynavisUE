@@ -104,7 +104,7 @@ public:
 	FBlueprintSignallingCallback OnBlueprintSignalling;
 
   UFUNCTION(BlueprintCallable, Category = "Network")
-  void SendResponse(FString Message);
+  void SendResponse(FString Message, int32 StartTime = -1);
 
   UFUNCTION(BlueprintCallable, Category = "Network")
   void SendError(FString Message);
@@ -146,6 +146,9 @@ public:
 	UTextureRenderTarget2D* InfoCamTarget;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
 	UTextureRenderTarget2D* SceneCamTarget;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Network")
+		bool bRespondWithTiming = false;
 		
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
 	  float MaxVelocity = 10.f;

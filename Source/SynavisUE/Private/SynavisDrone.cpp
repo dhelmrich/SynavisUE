@@ -103,6 +103,8 @@ void ASynavisDrone::AppendToMesh(TSharedPtr<FJsonObject> Jason)
 
 void ASynavisDrone::ParseInput(FString Descriptor)
 {
+  int32_t unixtime_start = (bRespondWithTiming) ? FDateTime::Now().ToUnixTimestamp() : -1;
+
   if (Descriptor.IsEmpty())
   {
     UE_LOG(LogTemp, Warning, TEXT("Empty Descriptor"));
@@ -288,7 +290,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
                     message += TEXT(",");
                 }
                 message += "]}";
-                this->SendResponse(message);
+                this->SendResponse(message,unixtime_start);
               }
               else
               {
@@ -302,7 +304,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
                   TSharedRef<TJsonWriter<TCHAR>> Writer = TJsonWriterFactory<TCHAR>::Create(&message);
                   FJsonSerializer::Serialize(asset_json.ToSharedRef(), Writer);
                   message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"spawn\",\"data\":%s}"), *message);
-                  this->SendResponse(message);
+                  this->SendResponse(message,unixtime_start);
                 }
               }
             }
@@ -320,7 +322,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
                 message += TEXT(",");
             }
             message += "]}";
-            this->SendResponse(message);
+            this->SendResponse(message,unixtime_start);
           }
         }
         else if (Jason->HasField("property"))
@@ -332,7 +334,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             FString Property = Jason->GetStringField("property");
             FString JsonData = GetJSONFromObjectProperty(Target, Property);
             FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
-            this->SendResponse(message);
+            this->SendResponse(message,unixtime_start);
           }
         }
         else
@@ -343,7 +345,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             FString Name = Target->GetName();
             FString JsonData = ListObjectPropertiesAsJSON(Target);
             FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":%s,\"data\":%s}"), *Name, *JsonData);
-            this->SendResponse(message);
+            this->SendResponse(message,unixtime_start);
           }
         }
       }
@@ -526,17 +528,17 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         if (Jason->HasField("frametime"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
-          SendResponse(Response);
+          SendResponse(Response,unixtime_start);
         }
         else if (Jason->HasField("memory"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
-          SendResponse(Response);
+          SendResponse(Response,unixtime_start);
         }
         else if (Jason->HasField("fps"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
-          SendResponse(Response);
+          SendResponse(Response,unixtime_start);
         }
         else if (Jason->HasField("object"))
         {
@@ -618,7 +620,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         else if (this->WorldSpawner)
         {
           auto name = this->WorldSpawner->SpawnObject(Jason);
-          SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name));
+          SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name),unixtime_start);
         }
         else
         {
@@ -685,7 +687,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             SendError("Unknown buffer name");
             return;
           }
-          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name));
+          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name),unixtime_start);
         }
         else if (Jason->HasField("stop"))
         {
@@ -773,12 +775,12 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             delete[] ReceptionBuffer;
             ReceptionBuffer = OutputBuffer;
             name = Jason->GetStringField("stop");
-            SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize));
+            SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize),unixtime_start);
             if (ReceptionName == "texture")
             {
               ApplyOrStoreTexture(Jason);
             }
-            //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name));
+            //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name),unixtime_start);
           }
         }
         else
@@ -810,13 +812,23 @@ void ASynavisDrone::ParseInput(FString Descriptor)
 
       FMemory::Memcpy(ReceptionBuffer + ReceptionBufferOffset, data, size);
       ReceptionBufferOffset += size;
-      SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName));
+      SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName),unixtime_start);
     }
   }
 }
 
-void ASynavisDrone::SendResponse(FString Descriptor)
+void ASynavisDrone::SendResponse(FString Descriptor, int32 StartTime)
 {
+  if(StartTime > 0)
+  {
+    // get the current unix time
+    const int32 CurrentTime = FDateTime::Now().ToUnixTimestamp();
+    // calculate the time difference
+    const int32 TimeDifference = CurrentTime - StartTime;
+    // add the time difference to the descriptor by removing the rbrace at the end and adding the time difference
+    Descriptor.RemoveAt(Descriptor.Len() - 1);
+    Descriptor.Append(FString::Printf(TEXT(", \"time\":%d}"), TimeDifference));
+  }
   FString Response(reinterpret_cast<TCHAR*>(TCHAR_TO_UTF8(*Descriptor)));
   UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor);
   OnPixelStreamingResponse.Broadcast(Response);
