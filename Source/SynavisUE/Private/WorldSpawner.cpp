@@ -398,6 +398,7 @@ void AWorldSpawner::BeginPlay()
   TArray<FString> ContentPaths;
   ContentPaths.Add(TEXT("/Game"));
   ContentPaths.Add(TEXT("/Synavis"));
+  ContentPaths.Add(TEXT("/Engine"));
   AssetRegistry.ScanPathsSynchronous(ContentPaths);
   AssetCache = MakeShareable(new FJsonObject());
   TSet<FTopLevelAssetPath> MeshAssetPaths;

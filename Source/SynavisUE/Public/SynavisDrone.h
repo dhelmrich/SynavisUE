@@ -148,7 +148,9 @@ public:
 	UTextureRenderTarget2D* SceneCamTarget;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Network")
-		bool bRespondWithTiming = false;
+		bool RespondWithTiming = false;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
+	UTextureRenderTarget2D* UHDSceneTarget;
 		
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
 	  float MaxVelocity = 10.f;

@@ -103,7 +103,7 @@ void ASynavisDrone::AppendToMesh(TSharedPtr<FJsonObject> Jason)
 
 void ASynavisDrone::ParseInput(FString Descriptor)
 {
-  int32_t unixtime_start = (bRespondWithTiming) ? FDateTime::Now().ToUnixTimestamp() : -1;
+  int32_t unixtime_start = (RespondWithTiming) ? FDateTime::Now().ToUnixTimestamp() : -1;
 
   if (Descriptor.IsEmpty())
   {
@@ -253,7 +253,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             Tangents[p] = FProcMeshTangent(TangentX, false);
           }
         }
-        if(type == "appendbase64")
+        if (type == "appendbase64")
         {
           AppendToMesh(Jason);
         }
@@ -463,7 +463,6 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           }
           else if (CameraToSwitchTo == "scene")
           {
-            
             UE_LOG(LogActor, Warning, TEXT("Switching to scene cam"));
             OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToSceneCam);
           }
@@ -562,11 +561,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       else if (type == "settings")
       {
         // check for settings subobject and put it into member
-        if (Jason->HasField("settings"))
-        {
-          auto Settings = Jason->GetObjectField("settings");
-          LoadFromJSON(Message);
-        }
+        LoadFromJSON(Message);
       }
       else if (type == "append")
       {
@@ -903,6 +898,16 @@ ASynavisDrone::ASynavisDrone()
     UE_LOG(LogTemp, Error, TEXT("Could not load one of the textures."));
   }
 
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> UHDTarget(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/UHDScene.UHDScene'"));
+  if (UHDTarget.Succeeded())
+  {
+    UHDSceneTarget = UHDTarget.Object;
+  }
+  else
+  {
+    UE_LOG(LogTemp, Error, TEXT("Could not load one of the textures."));
+  }
+
   SceneCam = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("Rendering Camera"));
   SceneCam->SetupAttachment(RootComponent);
   InfoCam->SetRelativeLocation({ 0,0,0 });
@@ -941,6 +946,10 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       continue;
     }
     auto* prop = GetClass()->FindPropertyByName(FName(*(Key.Key.RightChop(1))));
+    if(!prop)
+    {
+      SendError(FString::Printf(TEXT("Property %s not found."), *Key.Key));
+    }
     if (Key.Key.StartsWith(TEXT("f")))
     {
       FNumericProperty* fprop = CastField<FNumericProperty>(prop);
@@ -1004,7 +1013,7 @@ FTransform ASynavisDrone::FindGoodTransformBelowDrone()
   FHitResult Hit;
   FVector Start = GetActorLocation();
   FVector End = Start - FVector(0, 0, 1000);
-  Output.SetRotation(UKismetMathLibrary::RotatorFromAxisAndAngle({0,0,1}, FGenericPlatformMath::FRand() * 360.f).Quaternion());
+  Output.SetRotation(UKismetMathLibrary::RotatorFromAxisAndAngle({ 0,0,1 }, FGenericPlatformMath::FRand() * 360.f).Quaternion());
   if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECollisionChannel::ECC_WorldStatic, ParamsTrace))
   {
     Output.SetLocation(Hit.ImpactPoint);
