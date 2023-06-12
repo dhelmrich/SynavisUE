@@ -197,7 +197,6 @@ void AWorldSpawner::SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Normal
   TArray<float> Scalars, float Min, float Max, TArray<FVector2D> TexCoords, TArray<FProcMeshTangent> Tangents)
 {
   AActor* Actor = GetWorld()->SpawnActor<AActor>();
-
   const auto trans = DroneRef->FindGoodTransformBelowDrone();
   Actor->SetActorTransform(trans);
   UProceduralMeshComponent* mesh = NewObject<UProceduralMeshComponent>(this);

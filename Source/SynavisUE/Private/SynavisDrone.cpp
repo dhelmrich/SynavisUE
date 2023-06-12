@@ -2,6 +2,7 @@
 
 #include "SynavisDrone.h"
 
+#include "ImageUtils.h"
 #include "Kismet/GameplayStatics.h"
 #include "Camera/CameraComponent.h"
 #include "Engine/Scene.h"
@@ -235,7 +236,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         }
         // see if there are tangents
         FString tangents;
-        if (!Jason->TryGetStringField("tangents", tangents) || tangents.Len() > 0)
+        if (Jason->TryGetStringField("tangents", tangents) || tangents.Len() > 0)
         {
           Dest.Reset();
           Base64.Decode(tangents, Dest);
@@ -520,6 +521,11 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           bool Value = Jason->GetBoolField("value");
           USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
           SceneCapture->PrimitiveRenderMode = Value ? ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList : ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+        }
+        else if(Name == "RawData")
+        {
+          this->FrameCaptureTime = GetDoubleFieldOr(Jason, "framecapturetime", 10.0);
+          this->FrameCaptureCounter = this->FrameCaptureTime;
         }
       }
       else if (type == "info")
@@ -825,7 +831,7 @@ void ASynavisDrone::SendResponse(FString Descriptor, int32 StartTime)
     Descriptor.Append(FString::Printf(TEXT(", \"time\":%d}"), TimeDifference));
   }
   FString Response(reinterpret_cast<TCHAR*>(TCHAR_TO_UTF8(*Descriptor)));
-  UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor);
+  //UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor);
   OnPixelStreamingResponse.Broadcast(Response);
 }
 
@@ -1583,6 +1589,8 @@ void ASynavisDrone::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void ASynavisDrone::Tick(float DeltaTime)
 {
   Super::Tick(DeltaTime);
+  // fetch unix time
+  const int32 Now = static_cast<int32>(FDateTime::UtcNow().ToUnixTimestamp());
   UGameplayStatics::GetPlayerPawn(GetWorld(), 0)->SetActorLocation(GetActorLocation());
   FrameCaptureCounter -= DeltaTime;
   FVector Distance = NextLocation - GetActorLocation();
@@ -1637,7 +1645,7 @@ void ASynavisDrone::Tick(float DeltaTime)
   if (TransmissionTargets.Num() > 0)
   {
     // rtp timestamp has only 32 bits
-    const auto Now = static_cast<uint32>(FDateTime::UtcNow().ToUnixTimestamp());
+    
 
 
     FString Data = FString::Printf(TEXT("{\"type\":\"track\",\"time\":%n,\"data\":{"), Now);
@@ -1688,22 +1696,25 @@ void ASynavisDrone::Tick(float DeltaTime)
     auto* srtarget = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
 
     TPair<TArray<FColor>, TArray<FColor>> Data;
+    TPair<TArray<FColor>, TArray<FColor>> SData;
 
     FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
     ReadPixelFlags.SetLinearToGamma(true);
     srtarget->ReadPixels(Data.Value, ReadPixelFlags);
     irtarget->ReadPixels(Data.Key, ReadPixelFlags);
 
-    FBase64 Base64;
+    FImageUtils::CropAndScaleImage(InfoCam->TextureTarget->GetSurfaceWidth(), InfoCam->TextureTarget->GetSurfaceHeight(),
+        RawDataResolution, RawDataResolution, Data.Key, SData.Key);
+    FImageUtils::CropAndScaleImage(SceneCam->TextureTarget->GetSurfaceWidth(), SceneCam->TextureTarget->GetSurfaceHeight(),
+        RawDataResolution, RawDataResolution, Data.Value, SData.Value);
 
-    TArray<uint8> DataAsBytes(reinterpret_cast<uint8*>(Data.Key.GetData()), Data.Key.Num() * sizeof(FColor));
-
-    FString Base64String = Base64.Encode(DataAsBytes);
-
-
+    FString InfoString = FBase64::Encode(reinterpret_cast<uint8*>(SData.Key.GetData()), SData.Key.Num() * sizeof(FColor));
+    FString SceneString = FBase64::Encode(reinterpret_cast<uint8*>(SData.Value.GetData()), SData.Value.Num() * sizeof(FColor));
+    auto response = FString::Printf(TEXT("{\"type\":\"frame\",\"time\":%d,\"data\":\"%s\", \"scene\":\"%s\"}"), Now, *InfoString, *SceneString);
+    UE_LOG(LogActor, Warning, TEXT("Sending frames of length %d"), response.Len());
+    SendResponse(response);
 
     FrameCaptureCounter = FrameCaptureTime;
-    //UE_LOG(LogTemp, Display, TEXT("Setting Frame back to %f"),FrameCaptureTime);
   }
 
 }

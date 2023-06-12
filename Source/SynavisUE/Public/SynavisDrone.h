@@ -230,6 +230,9 @@ public:
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
 		int MaxFPS = -1.f;
 
+	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Network")
+		int RawDataResolution = 256;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Network")
     UPixelStreamingInput* RemoteInput;
 
