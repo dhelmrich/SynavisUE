@@ -104,7 +104,7 @@ void ASynavisDrone::AppendToMesh(TSharedPtr<FJsonObject> Jason)
 
 void ASynavisDrone::ParseInput(FString Descriptor)
 {
-  int32_t unixtime_start = (RespondWithTiming) ? FDateTime::Now().ToUnixTimestamp() : -1;
+  double unixtime_start = (RespondWithTiming) ? FPlatformTime::Seconds() : -1;
 
   if (Descriptor.IsEmpty())
   {
@@ -196,6 +196,11 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         Base64.Decode(normals, Dest);
         Normals.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
         FMemory::Memcpy(Normals.GetData(), Dest.GetData(), Dest.Num());
+        if(Normals.Num() != Points.Num())
+        {
+          SendError("Normals and Points do not match in size");
+          UE_LOG(LogTemp, Error, TEXT("Normals and Points do not match in size"));
+        }
         auto triangles = Jason->GetStringField("triangles");
         Dest.Reset(MaxSize);
         Base64.Decode(triangles, Dest);
@@ -267,6 +272,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       {
         auto* Target = this->GetObjectFromJSON(Jason);
         ApplyJSONToObject(Target, Jason.Get());
+        SendResponse("{\"type\":\"parameter\",\"name\":\"" + Target->GetName() + "\"}",unixtime_start);
       }
       else if (type == "query")
       {
@@ -316,10 +322,11 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             FString message = "{\"type\":\"query\",\"name\":\"all\",\"data\":[";
             TArray<AActor*> Actors;
             UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), Actors);
-            for (auto i = 0; i < Actors.Num(); ++i)
+            const auto NumActors = Actors.Num();
+            for (auto i = 0; i < NumActors; ++i)
             {
               message += FString::Printf(TEXT("\"%s\""), *Actors[i]->GetName());
-              if (i < Actors.Num() - 1)
+              if (i < NumActors - 1)
                 message += TEXT(",");
             }
             message += "]}";
@@ -337,6 +344,11 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
             this->SendResponse(message,unixtime_start);
           }
+          else
+          {
+            SendError("query request object not found");
+            UE_LOG(LogTemp, Error, TEXT("query request object not found"))
+          }
         }
         else
         {
@@ -345,8 +357,13 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           {
             FString Name = Target->GetName();
             FString JsonData = ListObjectPropertiesAsJSON(Target);
-            FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":%s,\"data\":%s}"), *Name, *JsonData);
+            FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
             this->SendResponse(message,unixtime_start);
+          }
+          else
+          {
+            SendError("query request object not found");
+            UE_LOG(LogTemp, Error, TEXT("query request object not found"))
           }
         }
       }
@@ -818,17 +835,17 @@ void ASynavisDrone::ParseInput(FString Descriptor)
   }
 }
 
-void ASynavisDrone::SendResponse(FString Descriptor, int32 StartTime)
+void ASynavisDrone::SendResponse(FString Descriptor, double StartTime)
 {
   if(StartTime > 0)
   {
     // get the current unix time
-    const int32 CurrentTime = FDateTime::Now().ToUnixTimestamp();
+    const double CurrentTime = FPlatformTime::Seconds();
     // calculate the time difference
-    const int32 TimeDifference = CurrentTime - StartTime;
+    const int32 TimeDifference = static_cast<int32> ((CurrentTime - StartTime)*1000);
     // add the time difference to the descriptor by removing the rbrace at the end and adding the time difference
     Descriptor.RemoveAt(Descriptor.Len() - 1);
-    Descriptor.Append(FString::Printf(TEXT(", \"time\":%d}"), TimeDifference));
+    Descriptor.Append(FString::Printf(TEXT(", \"processed_time\":%d}"), TimeDifference));
   }
   FString Response(reinterpret_cast<TCHAR*>(TCHAR_TO_UTF8(*Descriptor)));
   //UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor);
@@ -1035,17 +1052,18 @@ FString ASynavisDrone::ListObjectPropertiesAsJSON(UObject* Object)
 {
   const UClass* Class = Object->GetClass();
   FString OutputString = TEXT("{");
+  bool first = true;
   for (TFieldIterator<FProperty> It(Class, EFieldIteratorFlags::IncludeSuper); It; ++It)
   {
+    if (!first)
+    {
+      OutputString += TEXT(",");
+    }
+    else first = false;
     FProperty* Property = *It;
     auto name = Property->GetName();
     auto type = Property->GetCPPType();
     OutputString += TEXT(" \"") + name + TEXT("\": \"") + type + TEXT("\"");
-    // check if we are at the end of the list
-    if (It->Next)
-    {
-      OutputString += TEXT(",");
-    }
   }
   return OutputString + TEXT(" }");
 }

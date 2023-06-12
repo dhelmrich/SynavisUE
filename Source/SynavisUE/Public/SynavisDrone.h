@@ -104,7 +104,7 @@ public:
 	FBlueprintSignallingCallback OnBlueprintSignalling;
 
   UFUNCTION(BlueprintCallable, Category = "Network")
-  void SendResponse(FString Message, int32 StartTime = -1);
+  void SendResponse(FString Message, double StartTime = -1.0);
 
   UFUNCTION(BlueprintCallable, Category = "Network")
   void SendError(FString Message);
