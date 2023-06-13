@@ -35,7 +35,7 @@ public:
 	AWorldSpawner();
 
 	UFUNCTION(BlueprintCallable, Category = "Field", meta = (AutoCreateRefTerm = "Tangents, TexCoords"))
-		void SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Normals, TArray<int> Triangles,
+		AActor* SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Normals, TArray<int> Triangles,
 		            TArray<float> Scalars, float Min, float Max,
 		            TArray<FVector2D> TexCoords, TArray<FProcMeshTangent> Tangents);
 

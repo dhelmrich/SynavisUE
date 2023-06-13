@@ -265,8 +265,14 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         }
         else
         {
-          WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, Scalars, 0.0, 1.0, UVs, Tangents);
+          auto* act = WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, Scalars, 0.0, 1.0, UVs, Tangents);
+          
+          if(Jason->HasField("random"))
+          {
+            act->SetActorLocation(FVector(FMath::RandRange(-100,100),FMath::RandRange(-100,100),FMath::RandRange(0,100)));
+          }
         }
+        SendResponse("{\"type\":\"geometry\",\"name\":\"" + id + "\"}",unixtime_start);
       }
       else if (type == "parameter")
       {
@@ -848,7 +854,8 @@ void ASynavisDrone::SendResponse(FString Descriptor, double StartTime)
     Descriptor.Append(FString::Printf(TEXT(", \"processed_time\":%d}"), TimeDifference));
   }
   FString Response(reinterpret_cast<TCHAR*>(TCHAR_TO_UTF8(*Descriptor)));
-  //UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor);
+  // logging the first 20 characters of the response
+  UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor.Left(20));
   OnPixelStreamingResponse.Broadcast(Response);
 }
 
@@ -1317,45 +1324,6 @@ const bool ASynavisDrone::IsInEditor() const
 #endif
 }
 
-void ASynavisDrone::DecodeBase64InPlace(char* Source, int32_t Length, uint8* Destination, uint32 sizeoftype)
-{
-  // decode the base64 string
-  int32_t Padding = 0;
-  for (int32_t i = Length - 1; Source[i] == '='; --i)
-  {
-    ++Padding;
-  }
-  int32_t DecodedSize = ((Length * 3) / 4) - Padding;
-  int32_t SourceIndex = 0;
-  int32_t DestinationIndex = 0;
-  while (SourceIndex < Length)
-  {
-    uint32_t Accumulator = 0;
-    int32_t Bits = 0;
-    while (SourceIndex < Length && Bits < 24)
-    {
-      char SourceChar = Source[SourceIndex++];
-      uint8_t Value = Base64LookupTable[static_cast<uint32>(SourceChar)];
-      if (Value != 0xFF)
-      {
-        Accumulator = (Accumulator << 6) | Value;
-        Bits += 6;
-      }
-    }
-    if (Bits >= 8)
-    {
-      Destination[DestinationIndex++] = (Accumulator >> 16) & 0xFF;
-    }
-    if (Bits >= 16)
-    {
-      Destination[DestinationIndex++] = (Accumulator >> 8) & 0xFF;
-    }
-    if (Bits >= 24)
-    {
-      Destination[DestinationIndex++] = Accumulator & 0xFF;
-    }
-  }
-}
 
 int32_t ASynavisDrone::GetDecodedSize(char* Source, int32_t Length)
 {

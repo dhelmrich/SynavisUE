@@ -251,9 +251,6 @@ public:
 	UPROPERTY()
 	TArray<FTransmissionTarget> TransmissionTargets;
 
-	// This is a method to decode Base64 encoded strings, as the UE implementation
-	// requires too many copying steps to be useful for large data.
-	void DecodeBase64InPlace(char* Source, int32_t Length, uint8* Destination, uint32 sizeoftype = sizeof(char));
   int32_t GetDecodedSize(char* Source, int32_t Length);
 
 protected:

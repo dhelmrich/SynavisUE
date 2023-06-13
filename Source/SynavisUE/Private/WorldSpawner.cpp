@@ -32,6 +32,7 @@
 #include "Materials/MaterialExpressionTextureSampleParameter2DArray.h"
 #include "Engine/Texture2D.h"
 // Visual Components
+#include "SpawnTarget.h"
 #include "Engine/ExponentialHeightFog.h"
 #include "Components/DecalComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
@@ -193,18 +194,15 @@ AWorldSpawner::AWorldSpawner()
   }
 }
 
-void AWorldSpawner::SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Normals, TArray<int> Triangles,
+AActor* AWorldSpawner::SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Normals, TArray<int> Triangles,
   TArray<float> Scalars, float Min, float Max, TArray<FVector2D> TexCoords, TArray<FProcMeshTangent> Tangents)
 {
-  AActor* Actor = GetWorld()->SpawnActor<AActor>();
+  ASpawnTarget* Actor = GetWorld()->SpawnActor<ASpawnTarget>();
   const auto trans = DroneRef->FindGoodTransformBelowDrone();
   Actor->SetActorTransform(trans);
-  UProceduralMeshComponent* mesh = NewObject<UProceduralMeshComponent>(this);
-  Actor->AddInstanceComponent(mesh);
-  mesh->SetRelativeTransform(FTransform::Identity);
-  mesh->RegisterComponent();
-  mesh->CreateMeshSection_LinearColor(0, Points, Triangles, Normals, TArray<FVector2D>(), TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
-  this->OnSpawnProcMesh.Broadcast(mesh);
+  Actor->ProcMesh->CreateMeshSection_LinearColor(0, Points, Triangles, Normals, TArray<FVector2D>(), TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
+  this->OnSpawnProcMesh.Broadcast(Actor->ProcMesh);
+  return Actor;
 }
 
 

@@ -15,6 +15,9 @@ public:
 	// Sets default values for this actor's properties
 	ASpawnTarget();
 
+	UPROPERTY(BlueprintReadOnly, Category = "Management")
+	class UProceduralMeshComponent* ProcMesh;
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
