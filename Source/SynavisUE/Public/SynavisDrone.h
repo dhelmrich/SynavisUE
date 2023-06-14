@@ -241,6 +241,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Network")
 		const bool IsInEditor() const;
+
+	TOptional<TFunctionRef<void(TSharedPtr<FJsonObject>)>> ApplicationProcessInput;
 		
 	FCriticalSection Mutex;
 	bool CalculatedMaximumInOffThread = false;

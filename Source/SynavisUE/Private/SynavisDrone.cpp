@@ -813,6 +813,10 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           return;
         }
       }
+      else if (ApplicationProcessInput.IsSet())
+      {
+        ApplicationProcessInput.GetValue()(Jason);
+      }
     }
     else
     {
