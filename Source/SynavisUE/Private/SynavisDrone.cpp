@@ -132,7 +132,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     if (Jason->HasField("type"))
     {
       auto type = Jason->GetStringField("type");
-      UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
+      //UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
       if (type == "geometry")
       {
         Points.Empty();
@@ -855,7 +855,7 @@ void ASynavisDrone::SendResponse(FString Descriptor, double StartTime)
   }
   FString Response(reinterpret_cast<TCHAR*>(TCHAR_TO_UTF8(*Descriptor)));
   // logging the first 20 characters of the response
-  UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor.Left(20));
+  //UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor.Left(20));
   OnPixelStreamingResponse.Broadcast(Response);
 }
 
