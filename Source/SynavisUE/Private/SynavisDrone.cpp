@@ -148,116 +148,12 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       }
       else if (type == "directbase64" || type == "appendbase64")
       {
-        FBase64 Base64;
-        // this is the direct transmission of the geometry
-        // this means that the properties contain the buffers
-        Points.Empty();
-        Normals.Empty();
-        Triangles.Empty();
+        ParseGeometryFromJson(Jason);
         FString id;
         // check which geometry this message is for
         if (Jason->HasField("id"))
         {
           id = Jason->GetStringField("id");
-        }
-        // fetch the geometry from the world
-        if (!WorldSpawner)
-        {
-          SendError("No WorldSpawner found");
-          UE_LOG(LogTemp, Error, TEXT("No WorldSpawner found"));
-        }
-        // pre-allocate the data destination
-        TArray<uint8> Dest;
-        // determine the maximum size of the data
-        uint64_t MaxSize = 0;
-        for (auto Field : Jason->Values)
-        {
-          if (Field.Key == "type")
-            continue;
-          auto& Value = Field.Value;
-          if (Value->Type == EJson::String)
-          {
-            auto Source = Value->AsString();
-            if (Base64.GetDecodedDataSize(Source) > MaxSize)
-              MaxSize = Source.Len();
-          }
-        }
-        // allocate the destination buffer
-        Dest.SetNumUninitialized(MaxSize);
-        // get the json property for the points
-        auto points = Jason->GetStringField("points");
-        // decode the base64 string
-        Base64.Decode(points, Dest);
-        // copy the data into the points array
-        Points.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
-        FMemory::Memcpy(Points.GetData(), Dest.GetData(), Dest.Num());
-        auto normals = Jason->GetStringField("normals");
-        Dest.Reset(MaxSize);
-        Base64.Decode(normals, Dest);
-        Normals.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
-        FMemory::Memcpy(Normals.GetData(), Dest.GetData(), Dest.Num());
-        if(Normals.Num() != Points.Num())
-        {
-          SendError("Normals and Points do not match in size");
-          UE_LOG(LogTemp, Error, TEXT("Normals and Points do not match in size"));
-        }
-        auto triangles = Jason->GetStringField("triangles");
-        Dest.Reset(MaxSize);
-        Base64.Decode(triangles, Dest);
-        Triangles.SetNumUninitialized(Dest.Num() / sizeof(int), true);
-        FMemory::Memcpy(Triangles.GetData(), Dest.GetData(), Dest.Num());
-        UVs.Reset();
-        Dest.Reset(MaxSize);
-        if (Jason->HasField("texcoords"))
-        {
-          auto uvs = Jason->GetStringField("texcoords");
-          Base64.Decode(uvs, Dest);
-          UVs.SetNumUninitialized(Dest.Num() / sizeof(FVector2D), true);
-          FMemory::Memcpy(UVs.GetData(), Dest.GetData(), Dest.Num());
-        }
-        if (Jason->HasField("scalars"))
-        {
-          // see if there are scalars
-          auto scalars = Jason->GetStringField("scalars");
-          if (scalars.Len() > 0)
-          {
-            Dest.Reset();
-            Base64.Decode(scalars, Dest);
-            Scalars.SetNumUninitialized(Dest.Num() / sizeof(float), true);
-            // for range calculation, we must move through the data manually
-            auto ScalarData = reinterpret_cast<float*>(Dest.GetData());
-            auto Min = std::numeric_limits<float>::max();
-            auto Max = std::numeric_limits<float>::min();
-            for (size_t i = 0; i < Dest.Num() / sizeof(float); i++)
-            {
-              auto Value = ScalarData[i];
-              if (Value < Min)
-                Min = Value;
-              if (Value > Max)
-                Max = Value;
-              Scalars[i] = Value;
-            }
-          }
-        }
-        // see if there are tangents
-        FString tangents;
-        if (Jason->TryGetStringField("tangents", tangents) || tangents.Len() > 0)
-        {
-          Dest.Reset();
-          Base64.Decode(tangents, Dest);
-          Tangents.SetNumUninitialized(Dest.Num() / sizeof(FProcMeshTangent), true);
-          FMemory::Memcpy(Tangents.GetData(), Dest.GetData(), Dest.Num());
-        }
-        else
-        {
-          // calculate tangents
-          Tangents.SetNumUninitialized(Points.Num(), true);
-          for (int p = 0; p < Points.Num(); ++p)
-          {
-            FVector TangentX = FVector::CrossProduct(Normals[p], FVector(0, 0, 1));
-            TangentX.Normalize();
-            Tangents[p] = FProcMeshTangent(TangentX, false);
-          }
         }
         if (type == "appendbase64")
         {
@@ -843,6 +739,116 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName),unixtime_start);
     }
   }
+}
+
+void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
+{
+  FBase64 Base64;
+  // this is the direct transmission of the geometry
+  // this means that the properties contain the buffers
+  Points.Empty();
+  Normals.Empty();
+  Triangles.Empty();
+  // fetch the geometry from the world
+  if (!WorldSpawner)
+  {
+    SendError("No WorldSpawner found");
+    UE_LOG(LogTemp, Error, TEXT("No WorldSpawner found"));
+  }
+  // pre-allocate the data destination
+  TArray<uint8> Dest;
+  // determine the maximum size of the data
+  uint64_t MaxSize = 0;
+  for (auto Field : Jason->Values)
+  {
+    if (Field.Key == "type")
+      continue;
+    auto& Value = Field.Value;
+    if (Value->Type == EJson::String)
+    {
+      auto Source = Value->AsString();
+      if (Base64.GetDecodedDataSize(Source) > MaxSize)
+        MaxSize = Source.Len();
+    }
+  }
+  // allocate the destination buffer
+  Dest.SetNumUninitialized(MaxSize);
+  // get the json property for the points
+  auto points = Jason->GetStringField("points");
+  // decode the base64 string
+  Base64.Decode(points, Dest);
+  // copy the data into the points array
+  Points.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
+  FMemory::Memcpy(Points.GetData(), Dest.GetData(), Dest.Num());
+  auto normals = Jason->GetStringField("normals");
+  Dest.Reset(MaxSize);
+  Base64.Decode(normals, Dest);
+  Normals.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
+  FMemory::Memcpy(Normals.GetData(), Dest.GetData(), Dest.Num());
+  if (Normals.Num() != Points.Num())
+  {
+    SendError("Normals and Points do not match in size");
+    UE_LOG(LogTemp, Error, TEXT("Normals and Points do not match in size"));
+  }
+  auto triangles = Jason->GetStringField("triangles");
+  Dest.Reset(MaxSize);
+  Base64.Decode(triangles, Dest);
+  Triangles.SetNumUninitialized(Dest.Num() / sizeof(int), true);
+  FMemory::Memcpy(Triangles.GetData(), Dest.GetData(), Dest.Num());
+  UVs.Reset();
+  Dest.Reset(MaxSize);
+  if (Jason->HasField("texcoords"))
+  {
+    auto uvs = Jason->GetStringField("texcoords");
+    Base64.Decode(uvs, Dest);
+    UVs.SetNumUninitialized(Dest.Num() / sizeof(FVector2D), true);
+    FMemory::Memcpy(UVs.GetData(), Dest.GetData(), Dest.Num());
+  }
+  if (Jason->HasField("scalars"))
+  {
+    // see if there are scalars
+    auto scalars = Jason->GetStringField("scalars");
+    if (scalars.Len() > 0)
+    {
+      Dest.Reset();
+      Base64.Decode(scalars, Dest);
+      Scalars.SetNumUninitialized(Dest.Num() / sizeof(float), true);
+      // for range calculation, we must move through the data manually
+      auto ScalarData = reinterpret_cast<float*>(Dest.GetData());
+      auto Min = std::numeric_limits<float>::max();
+      auto Max = std::numeric_limits<float>::min();
+      for (size_t i = 0; i < Dest.Num() / sizeof(float); i++)
+      {
+        auto Value = ScalarData[i];
+        if (Value < Min)
+          Min = Value;
+        if (Value > Max)
+          Max = Value;
+        Scalars[i] = Value;
+      }
+    }
+  }
+  // see if there are tangents
+  FString tangents;
+  if (Jason->TryGetStringField("tangents", tangents) || tangents.Len() > 0)
+  {
+    Dest.Reset();
+    Base64.Decode(tangents, Dest);
+    Tangents.SetNumUninitialized(Dest.Num() / sizeof(FProcMeshTangent), true);
+    FMemory::Memcpy(Tangents.GetData(), Dest.GetData(), Dest.Num());
+  }
+  else
+  {
+    // calculate tangents
+    Tangents.SetNumUninitialized(Points.Num(), true);
+    for (int p = 0; p < Points.Num(); ++p)
+    {
+      FVector TangentX = FVector::CrossProduct(Normals[p], FVector(0, 0, 1));
+      TangentX.Normalize();
+      Tangents[p] = FProcMeshTangent(TangentX, false);
+    }
+  }
+
 }
 
 void ASynavisDrone::SendResponse(FString Descriptor, double StartTime)
