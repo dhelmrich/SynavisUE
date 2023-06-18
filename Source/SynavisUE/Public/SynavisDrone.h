@@ -170,7 +170,7 @@ public:
     float FrameCaptureTime = 10.f;
 
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
-    int RenderMode = 2;
+    int RenderMode = 3;
 
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
     float DistanceScale = 2000.f;
