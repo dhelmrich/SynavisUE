@@ -159,6 +159,9 @@ public:
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
     float DistanceToLandscape = -1.f;
 
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Network")
+    int DataChannelMaxSize = -1;
+
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
     float TurnWeight = 0.8f;
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")

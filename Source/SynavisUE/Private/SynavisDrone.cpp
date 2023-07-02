@@ -106,6 +106,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
 {
   double unixtime_start = (RespondWithTiming) ? FPlatformTime::Seconds() : -1;
 
+
   if (Descriptor.IsEmpty())
   {
     UE_LOG(LogTemp, Warning, TEXT("Empty Descriptor"));
@@ -162,19 +163,19 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         else
         {
           auto* act = WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, Scalars, 0.0, 1.0, UVs, Tangents);
-          
-          if(Jason->HasField("random"))
+
+          if (Jason->HasField("random"))
           {
-            act->SetActorLocation(FVector(FMath::RandRange(-100,100),FMath::RandRange(-100,100),FMath::RandRange(0,100)));
+            act->SetActorLocation(FVector(FMath::RandRange(-100, 100), FMath::RandRange(-100, 100), FMath::RandRange(0, 100)));
           }
         }
-        SendResponse("{\"type\":\"geometry\",\"name\":\"" + id + "\"}",unixtime_start);
+        SendResponse("{\"type\":\"geometry\",\"name\":\"" + id + "\"}", unixtime_start);
       }
       else if (type == "parameter")
       {
         auto* Target = this->GetObjectFromJSON(Jason);
         ApplyJSONToObject(Target, Jason.Get());
-        SendResponse("{\"type\":\"parameter\",\"name\":\"" + Target->GetName() + "\"}",unixtime_start);
+        SendResponse("{\"type\":\"parameter\",\"name\":\"" + Target->GetName() + "\"}", unixtime_start);
       }
       else if (type == "query")
       {
@@ -199,7 +200,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
                     message += TEXT(",");
                 }
                 message += "]}";
-                this->SendResponse(message,unixtime_start);
+                this->SendResponse(message, unixtime_start);
               }
               else
               {
@@ -213,7 +214,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
                   TSharedRef<TJsonWriter<TCHAR>> Writer = TJsonWriterFactory<TCHAR>::Create(&message);
                   FJsonSerializer::Serialize(asset_json.ToSharedRef(), Writer);
                   message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"spawn\",\"data\":%s}"), *message);
-                  this->SendResponse(message,unixtime_start);
+                  this->SendResponse(message, unixtime_start);
                 }
               }
             }
@@ -232,7 +233,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
                 message += TEXT(",");
             }
             message += "]}";
-            this->SendResponse(message,unixtime_start);
+            this->SendResponse(message, unixtime_start);
           }
         }
         else if (Jason->HasField("property"))
@@ -244,7 +245,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             FString Property = Jason->GetStringField("property");
             FString JsonData = GetJSONFromObjectProperty(Target, Property);
             FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
-            this->SendResponse(message,unixtime_start);
+            this->SendResponse(message, unixtime_start);
           }
           else
           {
@@ -260,7 +261,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             FString Name = Target->GetName();
             FString JsonData = ListObjectPropertiesAsJSON(Target);
             FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
-            this->SendResponse(message,unixtime_start);
+            this->SendResponse(message, unixtime_start);
           }
           else
           {
@@ -299,26 +300,26 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             return;
           }
 
-            // check if the property is one of the shortcut properties
-            if (PropertyName == "Position" || PropertyName == "Rotation" || PropertyName == "Scale" || PropertyName == "Transform")
+          // check if the property is one of the shortcut properties
+          if (PropertyName == "Position" || PropertyName == "Rotation" || PropertyName == "Scale" || PropertyName == "Transform")
+          {
+            // there is no property to track, but we need to add a transmission target
+            TransmissionTargets.Add({ Object, nullptr, EDataTypeIndicator::Transform, FString::Printf(TEXT("%s.%s"), *ObjectName, *PropertyName) });
+          }
+          else
+          {
+
+            auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+
+            if (!Property)
             {
-              // there is no property to track, but we need to add a transmission target
-              TransmissionTargets.Add({ Object, nullptr, EDataTypeIndicator::Transform, FString::Printf(TEXT("%s.%s"), *ObjectName, *PropertyName) });
+              SendError("track request Property not found");
+              return;
             }
-            else
-            {
 
-              auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
-
-              if (!Property)
-              {
-                SendError("track request Property not found");
-                return;
-              }
-
-              this->TransmissionTargets.Add({ Object, Property, this->FindType(Property),
-                FString::Printf(TEXT("%s.%s"),*ObjectName,*PropertyName) });
-            }
+            this->TransmissionTargets.Add({ Object, Property, this->FindType(Property),
+              FString::Printf(TEXT("%s.%s"),*ObjectName,*PropertyName) });
+          }
         }
       }
       else if (type == "untrack")
@@ -413,7 +414,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             }
           }
         }
-        else if(Name == "Show")
+        else if (Name == "Show")
         {
           FString CameraToIgnore = Jason->GetStringField("camera");
           USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
@@ -434,14 +435,14 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             }
           }
         }
-        else if(Name == "HideAll")
+        else if (Name == "HideAll")
         {
           FString CameraToIgnore = Jason->GetStringField("camera");
           bool Value = Jason->GetBoolField("value");
           USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
           SceneCapture->PrimitiveRenderMode = Value ? ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList : ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
         }
-        else if(Name == "RawData")
+        else if (Name == "RawData")
         {
           this->FrameCaptureTime = GetDoubleFieldOr(Jason, "framecapturetime", 10.0);
           this->FrameCaptureCounter = this->FrameCaptureTime;
@@ -452,22 +453,27 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         if (Jason->HasField("frametime"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
-          SendResponse(Response,unixtime_start);
+          SendResponse(Response, unixtime_start);
         }
         else if (Jason->HasField("memory"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
-          SendResponse(Response,unixtime_start);
+          SendResponse(Response, unixtime_start);
         }
         else if (Jason->HasField("fps"))
         {
           const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
-          SendResponse(Response,unixtime_start);
+          SendResponse(Response, unixtime_start);
         }
         else if (Jason->HasField("object"))
         {
           FString RequestedObjectName = Jason->GetStringField("object");
           TArray<AActor*> FoundActors;
+        }
+        else if (Jason->HasField("DataChannelSize"))
+        {
+          int DataChannelSize = Jason->GetIntegerField("DataChannelSize");
+          this->DataChannelMaxSize = DataChannelSize;
         }
       }
       else if (type == "console")
@@ -540,7 +546,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         else if (this->WorldSpawner)
         {
           auto name = this->WorldSpawner->SpawnObject(Jason);
-          SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name),unixtime_start);
+          SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name), unixtime_start);
         }
         else
         {
@@ -592,14 +598,17 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           }
           else if (ReceptionName == "triangles")
           {
+            Triangles.SetNum(size / sizeof(int32));
             ReceptionBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
           }
           else if (ReceptionName == "uvs")
           {
+            UVs.SetNum(size / sizeof(FVector2D));
             ReceptionBuffer = reinterpret_cast<uint8*>(UVs.GetData());
           }
           else if (ReceptionName == "texture")
           {
+            ReceptionBuffer = new uint8[size];
           }
           else
           {
@@ -607,7 +616,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             SendError("Unknown buffer name");
             return;
           }
-          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name),unixtime_start);
+          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name), unixtime_start);
         }
         else if (Jason->HasField("stop"))
         {
@@ -653,7 +662,9 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             }
             else if (ReceptionName == "texture")
             {
+
               OutputBuffer = new uint8[OutputSize];
+
             }
             else
             {
@@ -695,7 +706,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             delete[] ReceptionBuffer;
             ReceptionBuffer = OutputBuffer;
             name = Jason->GetStringField("stop");
-            SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize),unixtime_start);
+            SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize), unixtime_start);
             if (ReceptionName == "texture")
             {
               ApplyOrStoreTexture(Jason);
@@ -707,6 +718,65 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         {
           SendError("buffer request needs start or stop field");
           return;
+        }
+      }
+      else if (type == "receive")
+      {
+
+      }
+      else if (type == "frame")
+      {
+        FString res = GetStringFieldOr(Jason, "resolution", "base");
+        if (res == "base")
+        {
+          auto* irtarget = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
+          auto* srtarget = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
+
+          TPair<TArray<FColor>, TArray<FColor>> CData;
+
+          FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
+          ReadPixelFlags.SetLinearToGamma(true);
+          srtarget->ReadPixels(CData.Value, ReadPixelFlags);
+          irtarget->ReadPixels(CData.Key, ReadPixelFlags);
+
+          FString InfoString = FBase64::Encode(reinterpret_cast<uint8*>(CData.Key.GetData()), CData.Key.Num() * sizeof(FColor));
+          FString SceneString = FBase64::Encode(reinterpret_cast<uint8*>(CData.Value.GetData()), CData.Value.Num() * sizeof(FColor));
+
+          FString Base = TEXT("{\"type\":\"frame\",\"resolution\":\"base\",\"chunk\":");
+          FString End = TEXT("}");
+          int numChunks = 1;
+          while (Base.Len() * numChunks + End.Len() * numChunks + InfoString.Len() / numChunks + SceneString.Len() / numChunks > DataChannelMaxSize)
+          {
+            numChunks++;
+          }
+          // make a task in the game thread to send the chunks
+
+          FGraphEventRef Task = FFunctionGraphTask::CreateAndDispatchWhenReady(
+            [numChunks, InfoString = std::move(InfoString),
+            SceneString = std::move(SceneString), Base = std::move(Base), End = std::move(End),
+            SendResponse = std::bind(&ASynavisDrone::SendResponse, this, std::placeholders::_1, std::placeholders::_2)]()
+            {
+              for (int i = 0; i < numChunks; i++)
+              {
+                int start = i * InfoString.Len() / numChunks;
+                int end = (i + 1) * InfoString.Len() / numChunks;
+                FString Chunk = Base + FString::FromInt(i) + TEXT(",\"info\":\"") + InfoString.Mid(start, end - start) + TEXT("\",\"scene\":\"") + SceneString.Mid(start, end - start) + End;
+                SendResponse(Chunk, -1);
+              }
+            }, TStatId(), nullptr, ENamedThreads::GameThread);
+
+        }
+        else if (res == "high")
+        {
+          int factor = GetIntFieldOr(Jason, "factor", 1);
+          // this is delegated to HighResScreenshot
+          // we need to set the resolution of the screenshot
+          // this is done by setting the console variable
+          auto* controller = GetWorld()->GetFirstPlayerController();
+          if (controller)
+          {
+            controller->ConsoleCommand(FString::Printf(TEXT("HighResShot %d"), factor));
+          }
         }
       }
       else if (ApplicationProcessInput.IsSet())
@@ -736,7 +806,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
 
       FMemory::Memcpy(ReceptionBuffer + ReceptionBufferOffset, data, size);
       ReceptionBufferOffset += size;
-      SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName),unixtime_start);
+      SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName), unixtime_start);
     }
   }
 }
@@ -853,12 +923,12 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
 
 void ASynavisDrone::SendResponse(FString Descriptor, double StartTime)
 {
-  if(StartTime > 0)
+  if (StartTime > 0)
   {
     // get the current unix time
     const double CurrentTime = FPlatformTime::Seconds();
     // calculate the time difference
-    const int32 TimeDifference = static_cast<int32> ((CurrentTime - StartTime)*1000);
+    const int32 TimeDifference = static_cast<int32> ((CurrentTime - StartTime) * 1000);
     // add the time difference to the descriptor by removing the rbrace at the end and adding the time difference
     Descriptor.RemoveAt(Descriptor.Len() - 1);
     Descriptor.Append(FString::Printf(TEXT(", \"processed_time\":%d}"), TimeDifference));
@@ -986,7 +1056,7 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       continue;
     }
     auto* prop = GetClass()->FindPropertyByName(FName(*(Key.Key.RightChop(1))));
-    if(!prop)
+    if (!prop)
     {
       SendError(FString::Printf(TEXT("Property %s not found."), *Key.Key));
     }
@@ -1322,7 +1392,7 @@ void ASynavisDrone::UpdateCamera()
     CallibratedPostprocess->SetScalarParameterValue(TEXT("BlackDistance"), BlackDistance);
     CallibratedPostprocess->SetScalarParameterValue(TEXT("Mode"), (float)RenderMode);
     CallibratedPostprocess->SetVectorParameterValue(TEXT("BinScale"), (FLinearColor)BinScale);
-  }
+}
 }
 
 const bool ASynavisDrone::IsInEditor() const
@@ -1641,7 +1711,7 @@ void ASynavisDrone::Tick(float DeltaTime)
   if (TransmissionTargets.Num() > 0)
   {
     // rtp timestamp has only 32 bits
-    
+
 
 
     FString Data = FString::Printf(TEXT("{\"type\":\"track\",\"time\":%n,\"data\":{"), Now);
@@ -1700,9 +1770,9 @@ void ASynavisDrone::Tick(float DeltaTime)
     irtarget->ReadPixels(Data.Key, ReadPixelFlags);
 
     FImageUtils::CropAndScaleImage(InfoCam->TextureTarget->GetSurfaceWidth(), InfoCam->TextureTarget->GetSurfaceHeight(),
-        RawDataResolution, RawDataResolution, Data.Key, SData.Key);
+      RawDataResolution, RawDataResolution, Data.Key, SData.Key);
     FImageUtils::CropAndScaleImage(SceneCam->TextureTarget->GetSurfaceWidth(), SceneCam->TextureTarget->GetSurfaceHeight(),
-        RawDataResolution, RawDataResolution, Data.Value, SData.Value);
+      RawDataResolution, RawDataResolution, Data.Value, SData.Value);
 
     FString InfoString = FBase64::Encode(reinterpret_cast<uint8*>(SData.Key.GetData()), SData.Key.Num() * sizeof(FColor));
     FString SceneString = FBase64::Encode(reinterpret_cast<uint8*>(SData.Value.GetData()), SData.Value.Num() * sizeof(FColor));
@@ -1712,5 +1782,6 @@ void ASynavisDrone::Tick(float DeltaTime)
 
     FrameCaptureCounter = FrameCaptureTime;
   }
+
 
 }
