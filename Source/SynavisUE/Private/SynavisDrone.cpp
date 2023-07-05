@@ -447,6 +447,11 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           this->FrameCaptureTime = GetDoubleFieldOr(Jason, "framecapturetime", 10.0);
           this->FrameCaptureCounter = this->FrameCaptureTime;
         }
+        else if (Name == "navigate")
+        {
+          AutoNavigate = false;
+          NextLocation = FVector(Jason->GetNumberField("x"), Jason->GetNumberField("y"), Jason->GetNumberField("z"));
+        }
       }
       else if (type == "info")
       {
@@ -606,7 +611,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             UVs.SetNum(size / sizeof(FVector2D));
             ReceptionBuffer = reinterpret_cast<uint8*>(UVs.GetData());
           }
-          else if (ReceptionName == "texture")
+          else if (ReceptionName == "texture" || ReceptionName == "custom")
           {
             ReceptionBuffer = new uint8[size];
           }
@@ -660,11 +665,10 @@ void ASynavisDrone::ParseInput(FString Descriptor)
                 Tangents[i].bFlipTangentY = false;
               }
             }
-            else if (ReceptionName == "texture")
+            else if (ReceptionName == "texture" || ReceptionName == "custom")
             {
 
               OutputBuffer = new uint8[OutputSize];
-
             }
             else
             {
@@ -711,6 +715,15 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             {
               ApplyOrStoreTexture(Jason);
             }
+            else if (ReceptionName == "custom" && ApplicationProcessInput.IsSet())
+            {
+              Jason->SetStringField("name", ReceptionName);
+              Jason->SetNumberField("size", OutputSize);
+              // convert the pointer to a normal number to avoid problems with the json library
+              TSharedPtr<FJsonValueNumber> value = MakeShareable(new FJsonValueNumber(reinterpret_cast<uint64>(ReceptionBuffer)));
+              Jason->SetField("location", value);
+              ApplicationProcessInput.GetValue()(Jason);
+            }
             //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name),unixtime_start);
           }
         }
@@ -742,10 +755,10 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           FString InfoString = FBase64::Encode(reinterpret_cast<uint8*>(CData.Key.GetData()), CData.Key.Num() * sizeof(FColor));
           FString SceneString = FBase64::Encode(reinterpret_cast<uint8*>(CData.Value.GetData()), CData.Value.Num() * sizeof(FColor));
 
-          FString Base = TEXT("{\"type\":\"frame\",\"resolution\":\"base\",\"chunk\":");
+          FString Base = TEXT("{\"type\":\"frame\",\"chunk\":");
           FString End = TEXT("}");
           int numChunks = 1;
-          while (Base.Len() * numChunks + End.Len() * numChunks + InfoString.Len() / numChunks + SceneString.Len() / numChunks > DataChannelMaxSize)
+          while (7+ Base.Len() * numChunks + End.Len() * numChunks + InfoString.Len() / numChunks + SceneString.Len() / numChunks > DataChannelMaxSize)
           {
             numChunks++;
           }
@@ -760,7 +773,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
               {
                 int start = i * InfoString.Len() / numChunks;
                 int end = (i + 1) * InfoString.Len() / numChunks;
-                FString Chunk = Base + FString::FromInt(i) + TEXT(",\"info\":\"") + InfoString.Mid(start, end - start) + TEXT("\",\"scene\":\"") + SceneString.Mid(start, end - start) + End;
+                FString Chunk = Base + FString::FromInt(i) + TEXT("/") + FString::FromInt(numChunks) + TEXT(",\"info\":\"") + InfoString.Mid(start, end - start) + TEXT("\",\"scene\":\"") + SceneString.Mid(start, end - start) + End;
                 SendResponse(Chunk, -1);
               }
             }, TStatId(), nullptr, ENamedThreads::GameThread);
@@ -951,6 +964,7 @@ void ASynavisDrone::ResetSynavisState()
 }
 
 
+
 // Sets default values
 ASynavisDrone::ASynavisDrone()
 {
@@ -987,6 +1001,8 @@ ASynavisDrone::ASynavisDrone()
     PostProcessMat = Filter.Object;
 
   }
+
+
 
   static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> InfoTarget(TEXT("TextureRenderTarget2D'/SynavisUE/SceneTarget.SceneTarget'"));
   if (InfoTarget.Succeeded())
@@ -1027,6 +1043,24 @@ ASynavisDrone::ASynavisDrone()
   ParamsObject.AddObjectTypesToQuery(ECollisionChannel::ECC_WorldStatic);
   ParamsTrace.AddIgnoredActor(this);
 
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> SC_128_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/scene_128.scene_128'"));
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> TA_128_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/target_128.target_128'"));
+  if (SC_128_.Succeeded() && TA_128_.Succeeded()) RenderTargets.Add(128, { SC_128_.Object, TA_128_.Object });
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> SC_256_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/scene_256.scene_256'"));
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> TA_256_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/target_256.target_256'"));
+  if (SC_256_.Succeeded() && TA_256_.Succeeded()) RenderTargets.Add(256, { SC_256_.Object, TA_256_.Object });
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> SC_512_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/scene_512.scene_512'"));
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> TA_512_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/target_512.target_512'"));
+  if (SC_512_.Succeeded() && TA_512_.Succeeded()) RenderTargets.Add(512, { SC_512_.Object, TA_512_.Object });
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> SC_1024_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/scene_1024.scene_1024'"));
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> TA_1024_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/target_1024.target_1024'"));
+  if (SC_1024_.Succeeded() && TA_1024_.Succeeded()) RenderTargets.Add(1024, { SC_1024_.Object, TA_1024_.Object });
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> SC_2048_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/scene_2048.scene_2048'"));
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> TA_2048_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/target_2048.target_2048'"));
+  if (SC_2048_.Succeeded() && TA_2048_.Succeeded()) RenderTargets.Add(2048, { SC_2048_.Object, TA_2048_.Object });
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> SC_4096_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/scene_4096.scene_4096'"));
+  static ConstructorHelpers::FObjectFinder<UTextureRenderTarget2D> TA_4096_(TEXT("/Script/Engine.TextureRenderTarget2D'/SynavisUE/TextureBases/target_4096.target_4096'"));
+  if (SC_4096_.Succeeded() && TA_4096_.Succeeded()) RenderTargets.Add(4096, { SC_4096_.Object, TA_4096_.Object });
 
   LoadConfig();
   this->SetActorTickEnabled(false);
@@ -1392,7 +1426,9 @@ void ASynavisDrone::UpdateCamera()
     CallibratedPostprocess->SetScalarParameterValue(TEXT("BlackDistance"), BlackDistance);
     CallibratedPostprocess->SetScalarParameterValue(TEXT("Mode"), (float)RenderMode);
     CallibratedPostprocess->SetVectorParameterValue(TEXT("BinScale"), (FLinearColor)BinScale);
-}
+  }
+  SceneCam->TextureTarget = SceneCamTarget;
+  InfoCam->TextureTarget = InfoCamTarget;
 }
 
 const bool ASynavisDrone::IsInEditor() const
@@ -1404,6 +1440,20 @@ const bool ASynavisDrone::IsInEditor() const
 #endif
 }
 
+
+void ASynavisDrone::SetCameraResolution(int Resolution)
+{
+  if (RenderTargets.Contains(Resolution))
+  {
+    InfoCamTarget = RenderTargets[Resolution].Key;
+    SceneCamTarget = RenderTargets[Resolution].Value;
+    UpdateCamera();
+  }
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Resolution %d not found"), Resolution);
+  }
+}
 
 int32_t ASynavisDrone::GetDecodedSize(char* Source, int32_t Length)
 {
@@ -1666,7 +1716,8 @@ void ASynavisDrone::Tick(float DeltaTime)
   }
   if (FGenericPlatformMath::Abs((Distance).Size()) < 50.f)
   {
-    NextLocation = UKismetMathLibrary::RandomPointInBoundingBox(Flyspace->GetComponentLocation(), Flyspace->GetScaledBoxExtent());
+    if (AutoNavigate)
+      NextLocation = UKismetMathLibrary::RandomPointInBoundingBox(Flyspace->GetComponentLocation(), Flyspace->GetScaledBoxExtent());
     if (IsInEditor() && PrintScreenNewPosition)
     {
       GEngine->AddOnScreenDebugMessage(10, 30.f, FColor::Red, FString::Printf(

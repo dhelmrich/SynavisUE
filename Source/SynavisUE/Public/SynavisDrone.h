@@ -130,7 +130,6 @@ public:
 
   void ApplyJSONToObject(UObject* Object, FJsonObject* JSON);
 
-
   UObject* GetObjectFromJSON(TSharedPtr<FJsonObject> JSON);
 
   FString GetJSONFromObjectProperty(UObject* Object, FString PropertyName);
@@ -214,6 +213,9 @@ public:
     bool EditorOrientedCamera = false;
 
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "View")
+    bool AutoNavigate = true;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "View")
     bool Rain = false;
 
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "View")
@@ -259,6 +261,9 @@ public:
   UPROPERTY(BlueprintReadWrite, Category = "Network")
     TArray<FProcMeshTangent> Tangents;
 
+  UFUNCTION(BlueprintCallable, Category = "Camera")
+    void SetCameraResolution(int Resolution);
+
   TOptional<TFunctionRef<void(TSharedPtr<FJsonObject>)>> ApplicationProcessInput;
 
   FCriticalSection Mutex;
@@ -281,6 +286,8 @@ protected:
   void ApplyOrStoreTexture(TSharedPtr<FJsonObject> Json);
 
   AWorldSpawner* WorldSpawner;
+
+  TMap<int, TPair<UTextureRenderTarget2D*, UTextureRenderTarget2D*>> RenderTargets;
 
   FVector NextLocation;
   FVector Velocity;
