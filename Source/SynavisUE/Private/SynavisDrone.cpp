@@ -735,10 +735,64 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       }
       else if (type == "receive")
       {
-
+        // in-thread buffer progression message
+        int progress = Jason->GetIntegerField("progress");
+        if (progress == -1)
+        {
+          FTextureRenderTargetResource* Source = nullptr;
+          if (GetStringFieldOr(Jason, "camera", "scene") == "scene")
+          {
+            Source = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
+          }
+          else
+          {
+            Source = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
+          }
+          TArray<FColor> CamData;
+          FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
+          ReadPixelFlags.SetLinearToGamma(true);
+          Source->ReadPixels(CamData, ReadPixelFlags);
+          ReceptionFormat = FBase64::Encode(reinterpret_cast<uint8*>(CamData.GetData()), CamData.Num() * sizeof(FColor));
+          ReceptionBufferSize = 1;
+          ReceptionBufferOffset = 0;
+          while (30 * ReceptionBufferSize + (ReceptionFormat.Len() / ReceptionBufferSize) > DataChannelMaxSize)
+          {
+            ReceptionBufferSize++;
+          }
+          progress = 0;
+        }
+        else if(progress == -2)
+        {
+          auto missing_chunk = Jason->GetIntegerField("chunk");
+          if (missing_chunk < 0 || missing_chunk >= ReceptionBufferSize)
+          {
+            SendError("invalid chunk number");
+            return;
+          }
+          else
+          {
+            FString Response = TEXT("{\"type\":\"receive\",\"data\":\"");
+            auto ChunkSize = ReceptionFormat.Len() / ReceptionBufferSize;
+            const auto Lower = ChunkSize * missing_chunk;
+            const auto Upper = FGenericPlatformMath::Min(ChunkSize * (missing_chunk+1), (uint64_t)ReceptionFormat.Len());
+            Response += ReceptionFormat.Mid(Lower, Upper);
+            Response += TEXT("\"}");
+            SendResponse(Response);
+          }
+        }
+        else
+        {
+          LastProgress = progress;
+        }
       }
       else if (type == "frame")
       {
+        if (this->DataChannelMaxSize < 0)
+        {
+          SendError("frame was requested but data channel size is not set");
+          return;
+        }
+
         FString res = GetStringFieldOr(Jason, "resolution", "base");
         if (res == "base")
         {
@@ -755,10 +809,21 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           FString InfoString = FBase64::Encode(reinterpret_cast<uint8*>(CData.Key.GetData()), CData.Key.Num() * sizeof(FColor));
           FString SceneString = FBase64::Encode(reinterpret_cast<uint8*>(CData.Value.GetData()), CData.Value.Num() * sizeof(FColor));
 
-          FString Base = TEXT("{\"type\":\"frame\",\"chunk\":");
-          FString End = TEXT("}");
+          FString Base = TEXT("{\"type\":\"frame\",\"chunk\":\"");
+          FString End = TEXT("\"}");
           int numChunks = 1;
-          while (7+ Base.Len() * numChunks + End.Len() * numChunks + InfoString.Len() / numChunks + SceneString.Len() / numChunks > DataChannelMaxSize)
+          // lambda for the length of an int in digits
+          const auto intlen = [](int i) -> int
+          {
+            int len = 0;
+            while (i > 0)
+            {
+              i /= 10;
+              len++;
+            }
+            return len;
+          };
+          while (3 + (2 * intlen(numChunks)) + Base.Len() * numChunks + End.Len() * numChunks + InfoString.Len() / numChunks + SceneString.Len() / numChunks > DataChannelMaxSize)
           {
             numChunks++;
           }
@@ -767,14 +832,18 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           FGraphEventRef Task = FFunctionGraphTask::CreateAndDispatchWhenReady(
             [numChunks, InfoString = std::move(InfoString),
             SceneString = std::move(SceneString), Base = std::move(Base), End = std::move(End),
-            SendResponse = std::bind(&ASynavisDrone::SendResponse, this, std::placeholders::_1, std::placeholders::_2)]()
+            SendResponse = std::bind(&ASynavisDrone::SendResponse, this, std::placeholders::_1, std::placeholders::_2),
+            Delay = this->DataChannelBufferDelay
+            ]()
             {
               for (int i = 0; i < numChunks; i++)
               {
                 int start = i * InfoString.Len() / numChunks;
                 int end = (i + 1) * InfoString.Len() / numChunks;
-                FString Chunk = Base + FString::FromInt(i) + TEXT("/") + FString::FromInt(numChunks) + TEXT(",\"info\":\"") + InfoString.Mid(start, end - start) + TEXT("\",\"scene\":\"") + SceneString.Mid(start, end - start) + End;
+                FString Chunk = Base + FString::FromInt(i) + TEXT("/") + FString::FromInt(numChunks) + TEXT("\",\"info\":\"") + InfoString.Mid(start, end - start) + TEXT("\",\"scene\":\"") + SceneString.Mid(start, end - start) + End;
                 SendResponse(Chunk, -1);
+                // we need to wait a bit, otherwise the chunks might jam
+                FPlatformProcess::Sleep(Delay);
               }
             }, TStatId(), nullptr, ENamedThreads::GameThread);
 
@@ -1834,5 +1903,21 @@ void ASynavisDrone::Tick(float DeltaTime)
     FrameCaptureCounter = FrameCaptureTime;
   }
 
+  if (LastProgress >= 0 && ReceptionBufferOffset < ReceptionBufferSize)
+  {
+    // ReceptionBufferOffset is our chunk, LastProgress is last received chucnk
+    FString Response = TEXT("{\"type\":\"receive\",\"data\":\"");
+    auto ChunkSize = ReceptionFormat.Len() / ReceptionBufferSize;
+    const auto Lower = ChunkSize * LastProgress;
+    const auto Upper = FGenericPlatformMath::Min(ChunkSize * (LastProgress+1), (uint64_t)ReceptionFormat.Len());
+    Response += ReceptionFormat.Mid(Lower, Upper);
+    Response += TEXT("\", \"chunk\":\"");
+    Response += FString::FromInt(LastProgress);
+    Response += TEXT("/");
+    Response += FString::FromInt(ReceptionBufferSize);
+    Response += TEXT("\"}");
+    ReceptionBufferOffset++;
+    SendResponse(Response);
+  }
 
 }

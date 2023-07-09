@@ -159,7 +159,10 @@ public:
     float DistanceToLandscape = -1.f;
 
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Network")
-    int DataChannelMaxSize = -1;
+    int DataChannelMaxSize = 16000;
+
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Network")
+    float DataChannelBufferDelay = 0.1f;
 
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
     float TurnWeight = 0.8f;
@@ -308,6 +311,7 @@ protected:
   float FrameCaptureCounter;
 
   FJsonObject JsonConfig;
+  int LastProgress = -1;
   FString ReceptionName;
   FString ReceptionFormat;
   uint8* ReceptionBuffer; // this is normally a reinterpret of the below
