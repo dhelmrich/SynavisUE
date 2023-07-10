@@ -759,7 +759,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           {
             ReceptionBufferSize++;
           }
-          progress = 0;
+          LastProgress = 0;
         }
         else if(progress == -2)
         {
@@ -776,6 +776,10 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             const auto Lower = ChunkSize * missing_chunk;
             const auto Upper = FGenericPlatformMath::Min(ChunkSize * (missing_chunk+1), (uint64_t)ReceptionFormat.Len());
             Response += ReceptionFormat.Mid(Lower, Upper);
+            Response += TEXT("\", \"chunk\":\"");
+            Response += FString::FromInt(missing_chunk);
+            Response += TEXT("/");
+            Response += FString::FromInt(ReceptionBufferSize);
             Response += TEXT("\"}");
             SendResponse(Response);
           }
@@ -1908,11 +1912,11 @@ void ASynavisDrone::Tick(float DeltaTime)
     // ReceptionBufferOffset is our chunk, LastProgress is last received chucnk
     FString Response = TEXT("{\"type\":\"receive\",\"data\":\"");
     auto ChunkSize = ReceptionFormat.Len() / ReceptionBufferSize;
-    const auto Lower = ChunkSize * LastProgress;
-    const auto Upper = FGenericPlatformMath::Min(ChunkSize * (LastProgress+1), (uint64_t)ReceptionFormat.Len());
+    const auto Lower = ChunkSize * ReceptionBufferOffset;
+    const auto Upper = FGenericPlatformMath::Min(ChunkSize * (ReceptionBufferOffset +1), (uint64_t)ReceptionFormat.Len());
     Response += ReceptionFormat.Mid(Lower, Upper);
     Response += TEXT("\", \"chunk\":\"");
-    Response += FString::FromInt(LastProgress);
+    Response += FString::FromInt(ReceptionBufferOffset);
     Response += TEXT("/");
     Response += FString::FromInt(ReceptionBufferSize);
     Response += TEXT("\"}");
