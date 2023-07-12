@@ -55,6 +55,24 @@ inline float GetColor(const FColor& c, uint32 i)
   }
 }
 
+inline void WriteStringToSave(FString OutputString, FString FileName = "")
+{
+  if (FileName.IsEmpty())
+  {
+    auto unixtime = FDateTime::Now().ToUnixTimestamp();
+    FileName = FPaths::ProjectDir() + "/Synavisue" + FString::FromInt(unixtime) + ".json";
+  }
+  UE_LOG(LogTemp, Warning, TEXT("Writing to %s"), *FileName);
+  FFileHelper::SaveStringToFile(OutputString, *FileName);
+}
+
+inline void JsonToFile(TSharedPtr<FJsonObject> Json, FString FileName = FString())
+{
+  FString OutputString;
+  TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+  FJsonSerializer::Serialize(Json.ToSharedRef(), Writer);
+  WriteStringToSave(OutputString, FileName);
+}
 
 inline FString GetStringFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, const FString& Default)
 {
@@ -105,8 +123,6 @@ void ASynavisDrone::AppendToMesh(TSharedPtr<FJsonObject> Jason)
 void ASynavisDrone::ParseInput(FString Descriptor)
 {
   double unixtime_start = (RespondWithTiming) ? FPlatformTime::Seconds() : -1;
-
-
   if (Descriptor.IsEmpty())
   {
     UE_LOG(LogTemp, Warning, TEXT("Empty Descriptor"));
@@ -133,7 +149,9 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     if (Jason->HasField("type"))
     {
       auto type = Jason->GetStringField("type");
-      //UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
+
+      if (LogResponses)
+        UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
       if (type == "geometry")
       {
         Points.Empty();
@@ -498,6 +516,10 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       {
         // check for settings subobject and put it into member
         LoadFromJSON(Message);
+        if (this->DataChannelMaxSize < 1024)
+        {
+          this->DataChannelMaxSize = 1024;
+        }
       }
       else if (type == "append")
       {
@@ -740,30 +762,50 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         if (progress == -1)
         {
           FTextureRenderTargetResource* Source = nullptr;
-          if (GetStringFieldOr(Jason, "camera", "scene") == "scene")
-          {
-            Source = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
-          }
-          else
+          ReceptionName = GetStringFieldOr(Jason, "camera", "scene");
+          if (ReceptionName == "scene")
           {
             Source = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
           }
+          else
+          {
+            Source = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
+          }
           TArray<FColor> CamData;
-          FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
+          FReadSurfaceDataFlags ReadPixelFlags(ERangeCompressionMode::RCM_MinMax);
           ReadPixelFlags.SetLinearToGamma(true);
-          Source->ReadPixels(CamData, ReadPixelFlags);
+          if (!Source->ReadPixels(CamData, ReadPixelFlags))
+          {
+            SendError("Could not read pixels from camera");
+            return;
+          }
           ReceptionFormat = FBase64::Encode(reinterpret_cast<uint8*>(CamData.GetData()), CamData.Num() * sizeof(FColor));
+          if (this->IsInEditor())
+          {
+            auto OutputString = ReceptionFormat;
+            // split every 100th character into a new line
+            for (int i = 100; i < OutputString.Len(); i += 100)
+            {
+              OutputString.InsertAt(i, '\n');
+            }
+            auto unixtime = FDateTime::Now().ToUnixTimestamp();
+            auto FileName = FPaths::ProjectDir() + "/Synavisue" + FString::FromInt(unixtime) + ".json";
+            FFileHelper::SaveStringToFile(OutputString, *FileName);
+          }
+          UE_LOG(LogTemp, Warning, TEXT("Read %d pixels from camera amounting to sizes of %d->%d"), CamData.Num(), CamData.Num() * sizeof(FColor), ReceptionFormat.Len());
           ReceptionBufferSize = 1;
           ReceptionBufferOffset = 0;
-          while (30 * ReceptionBufferSize + (ReceptionFormat.Len() / ReceptionBufferSize) > DataChannelMaxSize)
+          auto BaseLength = ReceptionFormat.Len();
+          while (30 * ReceptionBufferSize + (BaseLength / ReceptionBufferSize) > DataChannelMaxSize)
           {
             ReceptionBufferSize++;
           }
           LastProgress = 0;
         }
-        else if(progress == -2)
+        else if (progress == -2)
         {
           auto missing_chunk = Jason->GetIntegerField("chunk");
+          UE_LOG(LogNet, Warning, TEXT("Received request for missing chunk %d"), missing_chunk);
           if (missing_chunk < 0 || missing_chunk >= ReceptionBufferSize)
           {
             SendError("invalid chunk number");
@@ -774,8 +816,12 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             FString Response = TEXT("{\"type\":\"receive\",\"data\":\"");
             auto ChunkSize = ReceptionFormat.Len() / ReceptionBufferSize;
             const auto Lower = ChunkSize * missing_chunk;
-            const auto Upper = FGenericPlatformMath::Min(ChunkSize * (missing_chunk+1), (uint64_t)ReceptionFormat.Len());
-            Response += ReceptionFormat.Mid(Lower, Upper);
+            auto Upper = FGenericPlatformMath::Min(ChunkSize * (missing_chunk + 1), (uint64_t)ReceptionFormat.Len());
+            if ((ReceptionFormat.Len() - Upper) < ReceptionBufferSize)
+            {
+              Upper = ReceptionFormat.Len();
+            }
+            Response += ReceptionFormat.Mid(Lower, Upper - Lower + 1);
             Response += TEXT("\", \"chunk\":\"");
             Response += FString::FromInt(missing_chunk);
             Response += TEXT("/");
@@ -864,6 +910,18 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             controller->ConsoleCommand(FString::Printf(TEXT("HighResShot %d"), factor));
           }
         }
+      }
+      else if (type == "apply")
+      {
+        // this is mostly due to a previous texture buffer transmission
+        // we need to apply the texture to the material
+        ApplyOrStoreTexture(Jason);
+        delete [] ReceptionBuffer;
+        ReceptionBuffer = nullptr;
+        ReceptionBufferSize = 0;
+        ReceptionName = "";
+        ReceptionFormat = "";
+        ReceptionBufferOffset = 0;
       }
       else if (ApplicationProcessInput.IsSet())
       {
@@ -1021,7 +1079,8 @@ void ASynavisDrone::SendResponse(FString Descriptor, double StartTime)
   }
   FString Response(reinterpret_cast<TCHAR*>(TCHAR_TO_UTF8(*Descriptor)));
   // logging the first 20 characters of the response
-  //UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor.Left(20));
+  if (LogResponses)
+    UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor.Left(20));
   OnPixelStreamingResponse.Broadcast(Response);
 }
 
@@ -1163,6 +1222,7 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       continue;
     }
     auto* prop = GetClass()->FindPropertyByName(FName(*(Key.Key.RightChop(1))));
+
     if (!prop)
     {
       SendError(FString::Printf(TEXT("Property %s not found."), *Key.Key));
@@ -1172,6 +1232,7 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       FNumericProperty* fprop = CastField<FNumericProperty>(prop);
       if (fprop)
       {
+        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *fprop->GetFullName(), Key.Value->AsNumber());
         fprop->SetFloatingPointPropertyValue(fprop->ContainerPtrToValuePtr<void>(this), Key.Value->AsNumber());
       }
     }
@@ -1180,6 +1241,7 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       FNumericProperty* iprop = CastField<FNumericProperty>(prop);
       if (iprop)
       {
+        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *iprop->GetFullName(), (int64)Key.Value->AsNumber());
         iprop->SetIntPropertyValue(iprop->ContainerPtrToValuePtr<void>(this), (int64)Key.Value->AsNumber());
       }
     }
@@ -1218,6 +1280,7 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       FBoolProperty* bprop = CastField<FBoolProperty>(prop);
       if (bprop)
       {
+        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *bprop->GetFullName(), Key.Value->AsBool());
         bprop->SetPropertyValue(bprop->ContainerPtrToValuePtr<void>(this), Key.Value->AsBool());
       }
     }
@@ -1712,7 +1775,6 @@ EDataTypeIndicator ASynavisDrone::FindType(FProperty* Property)
 
 void ASynavisDrone::ApplyOrStoreTexture(TSharedPtr<FJsonObject> Json)
 {
-
   // require fields: dimension, name, format
   // optional fields: data
   int x, y;
@@ -1913,14 +1975,24 @@ void ASynavisDrone::Tick(float DeltaTime)
     FString Response = TEXT("{\"type\":\"receive\",\"data\":\"");
     auto ChunkSize = ReceptionFormat.Len() / ReceptionBufferSize;
     const auto Lower = ChunkSize * ReceptionBufferOffset;
-    const auto Upper = FGenericPlatformMath::Min(ChunkSize * (ReceptionBufferOffset +1), (uint64_t)ReceptionFormat.Len());
-    Response += ReceptionFormat.Mid(Lower, Upper);
+    auto Upper = FGenericPlatformMath::Min(ChunkSize * (ReceptionBufferOffset + 1), (uint64_t)ReceptionFormat.Len());
+    if ((ReceptionFormat.Len() - Upper) < ReceptionBufferSize)
+    {
+      Upper = ReceptionFormat.Len();
+    }
+    const auto chunk = ReceptionFormat.Mid(Lower, Upper - Lower);
+    Response += chunk;
     Response += TEXT("\", \"chunk\":\"");
     Response += FString::FromInt(ReceptionBufferOffset);
     Response += TEXT("/");
     Response += FString::FromInt(ReceptionBufferSize);
     Response += TEXT("\"}");
     ReceptionBufferOffset++;
+    if (LogResponses)
+    {
+      UE_LOG(LogActor, Warning, TEXT("Sending chunk %d of %d"), ReceptionBufferOffset, ReceptionBufferSize);
+      UE_LOG(LogActor, Warning, TEXT("First and last 20 charactes of chunk %d: %s"), ReceptionBufferOffset, *(chunk.Mid(0, 20) + TEXT("...") + chunk.Mid(chunk.Len() - 20, 20)))
+    }
     SendResponse(Response);
   }
 

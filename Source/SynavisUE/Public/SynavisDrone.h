@@ -67,8 +67,9 @@ static inline FString PrintFormattedTransform(UObject* Object)
     return FString::Printf(TEXT("L{%s}R{%s}S{%s}"), *Transform.GetLocation().ToString(), *Transform.GetRotation().ToString(), *Transform.GetScale3D().ToString());
 
   }
-
 }
+
+
 
 USTRUCT(BlueprintType)
 struct FTransmissionTarget
@@ -149,6 +150,10 @@ public:
 
   UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Network")
     bool RespondWithTiming = false;
+
+  UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Debug")
+    bool LogResponses = false;
+
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
     UTextureRenderTarget2D* UHDSceneTarget;
 
@@ -279,6 +284,9 @@ public:
     TArray<FTransmissionTarget> TransmissionTargets;
 
   int32_t GetDecodedSize(char* Source, int32_t Length);
+
+  const uint8* GetBufferLocation() const { return ReceptionBuffer; }
+  const uint64 GetBufferSize() const { return ReceptionBufferSize; }
 
 protected:
   // Called when the game starts or when spawned
