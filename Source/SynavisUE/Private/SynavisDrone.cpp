@@ -648,7 +648,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         else if (Jason->HasField("stop"))
         {
           // compute the size of the output buffer
-          auto OutputSize = GetDecodedSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
+          auto OutputSize = FBase64::GetDecodedDataSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
 
           uint8* OutputBuffer = nullptr;
           // if we got a base64 buffer, we need to decode it
@@ -737,14 +737,9 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             {
               ApplyOrStoreTexture(Jason);
             }
-            else if (ReceptionName == "custom" && ApplicationProcessInput.IsSet())
+            else
             {
-              Jason->SetStringField("name", ReceptionName);
-              Jason->SetNumberField("size", OutputSize);
-              // convert the pointer to a normal number to avoid problems with the json library
-              TSharedPtr<FJsonValueNumber> value = MakeShareable(new FJsonValueNumber(reinterpret_cast<uint64>(ReceptionBuffer)));
-              Jason->SetField("location", value);
-              ApplicationProcessInput.GetValue()(Jason);
+              ReceptionBufferSize = OutputSize;
             }
             //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name),unixtime_start);
           }
@@ -925,6 +920,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       }
       else if (ApplicationProcessInput.IsSet())
       {
+        UE_LOG(LogTemp, Warning, TEXT("Unknown Type, I am delegating this to custom processing."));
         ApplicationProcessInput.GetValue()(Jason);
       }
     }
@@ -1979,6 +1975,7 @@ void ASynavisDrone::Tick(float DeltaTime)
     if ((ReceptionFormat.Len() - Upper) < ReceptionBufferSize)
     {
       Upper = ReceptionFormat.Len();
+      LastProgress = -1;
     }
     const auto chunk = ReceptionFormat.Mid(Lower, Upper - Lower);
     Response += chunk;
@@ -1995,5 +1992,4 @@ void ASynavisDrone::Tick(float DeltaTime)
     }
     SendResponse(Response);
   }
-
 }

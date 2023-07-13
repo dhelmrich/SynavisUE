@@ -272,7 +272,7 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Camera")
     void SetCameraResolution(int Resolution);
 
-  TOptional<TFunctionRef<void(TSharedPtr<FJsonObject>)>> ApplicationProcessInput;
+  TOptional<TFunction<void(TSharedPtr<FJsonObject>)>> ApplicationProcessInput;
 
   FCriticalSection Mutex;
   bool CalculatedMaximumInOffThread = false;
