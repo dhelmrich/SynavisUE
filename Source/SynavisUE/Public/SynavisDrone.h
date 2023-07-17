@@ -238,6 +238,12 @@ public:
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Time")
     bool PrintScreenNewPosition = false;
 
+  UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
+    bool BindPawnToCamera = false;
+
+  UFUNCTION(BlueprintCallable, Category = "Network")
+    void SendTransmissionRequest();
+
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Time")
     float AutoExposureBias = 0.413f;
 

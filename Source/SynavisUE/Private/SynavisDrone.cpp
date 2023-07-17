@@ -1550,6 +1550,12 @@ FString ASynavisDrone::GetJSONFromObjectProperty(UObject* Object, FString Proper
   return TEXT("{}");
 }
 
+void ASynavisDrone::SendTransmissionRequest()
+{
+  // construct a JSON message with current camera position, rotation, and FOV
+
+}
+
 void ASynavisDrone::UpdateCamera()
 {
   if (CallibratedPostprocess)
@@ -1838,7 +1844,9 @@ void ASynavisDrone::Tick(float DeltaTime)
   Super::Tick(DeltaTime);
   // fetch unix time
   const int32 Now = static_cast<int32>(FDateTime::UtcNow().ToUnixTimestamp());
-  UGameplayStatics::GetPlayerPawn(GetWorld(), 0)->SetActorLocation(GetActorLocation());
+  if(BindPawnToCamera)
+    UGameplayStatics::GetPlayerPawn(GetWorld(), 0)->SetActorLocation(GetActorLocation());
+
   FrameCaptureCounter -= DeltaTime;
   FVector Distance = NextLocation - GetActorLocation();
   if (DistanceToLandscape > 0.f)
