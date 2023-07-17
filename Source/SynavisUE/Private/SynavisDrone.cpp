@@ -1550,12 +1550,6 @@ FString ASynavisDrone::GetJSONFromObjectProperty(UObject* Object, FString Proper
   return TEXT("{}");
 }
 
-void ASynavisDrone::SendTransmissionRequest()
-{
-  // construct a JSON message with current camera position, rotation, and FOV
-
-}
-
 void ASynavisDrone::UpdateCamera()
 {
   if (CallibratedPostprocess)

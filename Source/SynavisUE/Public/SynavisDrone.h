@@ -241,9 +241,6 @@ public:
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
     bool BindPawnToCamera = false;
 
-  UFUNCTION(BlueprintCallable, Category = "Network")
-    void SendTransmissionRequest();
-
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Time")
     float AutoExposureBias = 0.413f;
 
@@ -314,7 +311,7 @@ protected:
   uint64_t SampleSize = 0;
   UMaterial* PostProcessMat;
   float LowestLandscapeBound;
-  class UMaterialInstanceDynamic* CallibratedPostprocess;
+  class UMaterialInstanceDynamic* CallibratedPostprocess{ nullptr };
 
   float FocalLength;
   float TargetFocalLength;
