@@ -76,7 +76,7 @@ inline void JsonToFile(TSharedPtr<FJsonObject> Json, FString FileName = FString(
 
 inline FString GetStringFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, const FString& Default)
 {
-  if (Json->HasTypedField<EJson::String>(Field))
+  if (Json.IsValid() && Json->HasTypedField<EJson::String>(Field))
   {
     return Json->GetStringField(Field);
   }
@@ -85,7 +85,7 @@ inline FString GetStringFieldOr(TSharedPtr<FJsonObject> Json, const FString& Fie
 
 inline int32 GetIntFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, int32 Default)
 {
-  if (Json->HasTypedField<EJson::Number>(Field))
+  if (Json.IsValid() && Json->HasTypedField<EJson::Number>(Field))
   {
     return Json->GetIntegerField(Field);
   }
@@ -94,7 +94,7 @@ inline int32 GetIntFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, i
 
 inline double GetDoubleFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, double Default)
 {
-  if (Json->HasTypedField<EJson::Number>(Field))
+  if (Json.IsValid() && Json->HasTypedField<EJson::Number>(Field))
   {
     return Json->GetNumberField(Field);
   }
@@ -143,7 +143,6 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     TSharedPtr<FJsonObject> Jason = MakeShareable(new FJsonObject());
     TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(Message);
     FJsonSerializer::Deserialize(Reader, Jason);
-
 
     // check if the message is a geometry message
     if (Jason->HasField("type"))
@@ -839,59 +838,11 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         }
 
         FString res = GetStringFieldOr(Jason, "resolution", "base");
+        FString ImageTarget = GetStringFieldOr(Jason, "camera", "scene");
+
         if (res == "base")
         {
-          auto* irtarget = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
-          auto* srtarget = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
-
-          TPair<TArray<FColor>, TArray<FColor>> CData;
-
-          FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
-          ReadPixelFlags.SetLinearToGamma(true);
-          srtarget->ReadPixels(CData.Value, ReadPixelFlags);
-          irtarget->ReadPixels(CData.Key, ReadPixelFlags);
-
-          FString InfoString = FBase64::Encode(reinterpret_cast<uint8*>(CData.Key.GetData()), CData.Key.Num() * sizeof(FColor));
-          FString SceneString = FBase64::Encode(reinterpret_cast<uint8*>(CData.Value.GetData()), CData.Value.Num() * sizeof(FColor));
-
-          FString Base = TEXT("{\"type\":\"frame\",\"chunk\":\"");
-          FString End = TEXT("\"}");
-          int numChunks = 1;
-          // lambda for the length of an int in digits
-          const auto intlen = [](int i) -> int
-          {
-            int len = 0;
-            while (i > 0)
-            {
-              i /= 10;
-              len++;
-            }
-            return len;
-          };
-          while (3 + (2 * intlen(numChunks)) + Base.Len() * numChunks + End.Len() * numChunks + InfoString.Len() / numChunks + SceneString.Len() / numChunks > DataChannelMaxSize)
-          {
-            numChunks++;
-          }
-          // make a task in the game thread to send the chunks
-
-          FGraphEventRef Task = FFunctionGraphTask::CreateAndDispatchWhenReady(
-            [numChunks, InfoString = std::move(InfoString),
-            SceneString = std::move(SceneString), Base = std::move(Base), End = std::move(End),
-            SendResponse = std::bind(&ASynavisDrone::SendResponse, this, std::placeholders::_1, std::placeholders::_2),
-            Delay = this->DataChannelBufferDelay
-            ]()
-            {
-              for (int i = 0; i < numChunks; i++)
-              {
-                int start = i * InfoString.Len() / numChunks;
-                int end = (i + 1) * InfoString.Len() / numChunks;
-                FString Chunk = Base + FString::FromInt(i) + TEXT("/") + FString::FromInt(numChunks) + TEXT("\",\"info\":\"") + InfoString.Mid(start, end - start) + TEXT("\",\"scene\":\"") + SceneString.Mid(start, end - start) + End;
-                SendResponse(Chunk, -1);
-                // we need to wait a bit, otherwise the chunks might jam
-                FPlatformProcess::Sleep(Delay);
-              }
-            }, TStatId(), nullptr, ENamedThreads::GameThread);
-
+          SendRawFrame(Jason);
         }
         else if (res == "high")
         {
@@ -911,7 +862,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         // this is mostly due to a previous texture buffer transmission
         // we need to apply the texture to the material
         ApplyOrStoreTexture(Jason);
-        delete [] ReceptionBuffer;
+        delete[] ReceptionBuffer;
         ReceptionBuffer = nullptr;
         ReceptionBufferSize = 0;
         ReceptionName = "";
@@ -1563,6 +1514,93 @@ void ASynavisDrone::UpdateCamera()
   InfoCam->TextureTarget = InfoCamTarget;
 }
 
+void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
+{
+
+  if (this->DataChannelMaxSize < 0)
+  {
+    return;
+  }
+
+  FString ImageTarget = GetStringFieldOr(Jason, "camera", "scene");
+
+  auto* rtarget = (ImageTarget == "scene")
+    ? SceneCam->TextureTarget->GameThread_GetRenderTargetResource() : InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
+  auto* CameraTarget = (ImageTarget == "scene") ? SceneCam : InfoCam;
+
+  union
+  {
+    struct
+    {
+      float fov{};
+      int width{};
+      int height{};
+      int id;
+      float pos[3]{0.f,0.f,0.f};
+      float rot[3]{0.f,0.f,0.f};
+    } data;
+    uint8_t rawdata[sizeof(data)]{};
+  } package;
+  package.data.fov = CameraTarget->FOVAngle;
+  package.data.width = CameraTarget->TextureTarget->GetSurfaceWidth();
+  package.data.height = CameraTarget->TextureTarget->GetSurfaceHeight();
+  package.data.pos[0] = CameraTarget->GetComponentLocation().X;
+  package.data.pos[1] = CameraTarget->GetComponentLocation().Y;
+  package.data.pos[2] = CameraTarget->GetComponentLocation().Z;
+  package.data.rot[0] = CameraTarget->GetComponentRotation().Pitch;
+  package.data.rot[1] = CameraTarget->GetComponentRotation().Yaw;
+  package.data.rot[2] = CameraTarget->GetComponentRotation().Roll;
+  package.data.id = (bFreezeID) ? LastTransmissionID : this->GetTransmissionID();
+  FString packageString = FBase64::Encode(package.rawdata, sizeof(package.rawdata));
+
+  TArray<FColor> CData;
+
+  FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
+  ReadPixelFlags.SetLinearToGamma(true);
+  rtarget->ReadPixels(CData, ReadPixelFlags);
+
+  // print transmission ID as hex 
+  FString TransmissionID = FString::Printf(TEXT("%x"), this->GetTransmissionID());
+
+  FString RenderTargetString = FBase64::Encode(reinterpret_cast<uint8*>(CData.GetData()), CData.Num() * sizeof(FColor));
+
+  FString Base = TEXT("{\"type\":\"frame\",\"meta\":\"") + packageString + TEXT("\",\"chunk\":\"");
+  FString End = TEXT("\"}");
+  int numChunks = 1;
+  // lambda for the length of an int in digits
+  const auto intlen = [](int i) -> int
+  {
+    int len = 0;
+    while (i > 0)
+    {
+      i /= 10;
+      len++;
+    }
+    return len;
+  };
+  while (3 + (2 * intlen(numChunks)) + Base.Len() * numChunks + End.Len() * numChunks + RenderTargetString.Len() / numChunks > DataChannelMaxSize)
+  {
+    numChunks++;
+  }
+  // make a task in the game thread to send the chunks
+  FGraphEventRef Task = FFunctionGraphTask::CreateAndDispatchWhenReady(
+    [RenderTargetString = std::move(RenderTargetString), Base = std::move(Base), End = std::move(End),
+    SendResponse = std::bind(&ASynavisDrone::SendResponse, this, std::placeholders::_1, -1),
+    Delay = this->DataChannelBufferDelay, numChunks
+    ]()
+    {
+      for (int i = 0; i < numChunks; i++)
+      {
+        int start = i * RenderTargetString.Len() / numChunks;
+        int end = (i + 1) * RenderTargetString.Len() / numChunks;
+        FString Chunk = Base + FString::FromInt(i) + TEXT("/") + FString::FromInt(numChunks) + TEXT("\",\"data\":\"") + RenderTargetString.Mid(start, end - start) + End;
+        SendResponse(Chunk, -1);
+        // we need to wait a bit, otherwise the chunks might jam
+        FPlatformProcess::Sleep(Delay);
+      }
+    }, TStatId(), nullptr, ENamedThreads::AnyBackgroundHiPriTask);
+}
+
 const bool ASynavisDrone::IsInEditor() const
 {
 #ifdef WITH_EDITOR
@@ -1596,6 +1634,11 @@ int32_t ASynavisDrone::GetDecodedSize(char* Source, int32_t Length)
     ++Padding;
   }
   return ((Length * 3) / 4) - Padding;
+}
+
+int ASynavisDrone::GetTransmissionID()
+{
+  return ++LastTransmissionID;
 }
 
 // Called when the game starts or when spawned
@@ -1838,7 +1881,7 @@ void ASynavisDrone::Tick(float DeltaTime)
   Super::Tick(DeltaTime);
   // fetch unix time
   const int32 Now = static_cast<int32>(FDateTime::UtcNow().ToUnixTimestamp());
-  if(BindPawnToCamera)
+  if (BindPawnToCamera)
     UGameplayStatics::GetPlayerPawn(GetWorld(), 0)->SetActorLocation(GetActorLocation());
 
   FrameCaptureCounter -= DeltaTime;
@@ -1942,28 +1985,7 @@ void ASynavisDrone::Tick(float DeltaTime)
   // prepare texture for storage
   if (FrameCaptureTime > 0.f && FrameCaptureCounter <= 0.f)
   {
-    auto* irtarget = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
-    auto* srtarget = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
-
-    TPair<TArray<FColor>, TArray<FColor>> Data;
-    TPair<TArray<FColor>, TArray<FColor>> SData;
-
-    FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
-    ReadPixelFlags.SetLinearToGamma(true);
-    srtarget->ReadPixels(Data.Value, ReadPixelFlags);
-    irtarget->ReadPixels(Data.Key, ReadPixelFlags);
-
-    FImageUtils::CropAndScaleImage(InfoCam->TextureTarget->GetSurfaceWidth(), InfoCam->TextureTarget->GetSurfaceHeight(),
-      RawDataResolution, RawDataResolution, Data.Key, SData.Key);
-    FImageUtils::CropAndScaleImage(SceneCam->TextureTarget->GetSurfaceWidth(), SceneCam->TextureTarget->GetSurfaceHeight(),
-      RawDataResolution, RawDataResolution, Data.Value, SData.Value);
-
-    FString InfoString = FBase64::Encode(reinterpret_cast<uint8*>(SData.Key.GetData()), SData.Key.Num() * sizeof(FColor));
-    FString SceneString = FBase64::Encode(reinterpret_cast<uint8*>(SData.Value.GetData()), SData.Value.Num() * sizeof(FColor));
-    auto response = FString::Printf(TEXT("{\"type\":\"frame\",\"time\":%d,\"data\":\"%s\", \"scene\":\"%s\"}"), Now, *InfoString, *SceneString);
-    UE_LOG(LogActor, Warning, TEXT("Sending frames of length %d"), response.Len());
-    SendResponse(response);
-
+    SendRawFrame(nullptr, false);
     FrameCaptureCounter = FrameCaptureTime;
   }
 

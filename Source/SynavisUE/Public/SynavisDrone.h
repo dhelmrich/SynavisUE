@@ -256,6 +256,10 @@ public:
   UFUNCTION(BlueprintCallable, Category = "View")
     void UpdateCamera();
 
+  UFUNCTION(BlueprintCallable, Category = "View")
+    void SendFrame(){ SendRawFrame(nullptr,false); }
+    void SendRawFrame(TSharedPtr<FJsonObject> Data = nullptr, bool bFreezeID = false);
+
   UFUNCTION(BlueprintCallable, Category = "Network")
     const bool IsInEditor() const;
 
@@ -291,6 +295,9 @@ public:
   const uint8* GetBufferLocation() const { return ReceptionBuffer; }
   const uint64 GetBufferSize() const { return ReceptionBufferSize; }
 
+  UFUNCTION(BlueprintCallable, Category = "Network")
+    int GetTransmissionID();
+
 protected:
   // Called when the game starts or when spawned
   virtual void BeginPlay() override;
@@ -302,7 +309,7 @@ protected:
   AWorldSpawner* WorldSpawner;
 
   TMap<int, TPair<UTextureRenderTarget2D*, UTextureRenderTarget2D*>> RenderTargets;
-
+  int LastTransmissionID = 100;
   FVector NextLocation;
   FVector Velocity;
   FVector SpaceOrigin;
