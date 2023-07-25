@@ -164,7 +164,7 @@ public:
     float DistanceToLandscape = -1.f;
 
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Network")
-    int DataChannelMaxSize = 16000;
+    int DataChannelMaxSize = 32767;
 
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Network")
     float DataChannelBufferDelay = 0.1f;
