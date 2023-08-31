@@ -1536,8 +1536,8 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
       int width{};
       int height{};
       int id;
-      float pos[3]{0.f,0.f,0.f};
-      float rot[3]{0.f,0.f,0.f};
+      float pos[3]{ 0.f,0.f,0.f };
+      float rot[3]{ 0.f,0.f,0.f };
     } data;
     uint8_t rawdata[sizeof(data)]{};
   } package;
@@ -1649,6 +1649,7 @@ void ASynavisDrone::BeginPlay()
 
   InfoCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
   SceneCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
+  
   SpaceOrigin = Flyspace->GetComponentLocation();
   SpaceExtend = Flyspace->GetScaledBoxExtent();
 
@@ -1914,7 +1915,16 @@ void ASynavisDrone::Tick(float DeltaTime)
     Velocity = Velocity / Velocity.Size();
     SetActorLocation(GetActorLocation() + (Velocity * DeltaTime * MaxVelocity));
     if (!EditorOrientedCamera)
+    {
       SetActorRotation(Velocity.ToOrientationRotator());
+      // get the player controller
+      APlayerController* PlayerController = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+      if (PlayerController)
+      {
+        // set its rotation
+        PlayerController->SetControlRotation(Velocity.ToOrientationRotator());
+      }
+    }
     if (DistanceToLandscape > 0.f)
     {
       EnsureDistancePreservation();
