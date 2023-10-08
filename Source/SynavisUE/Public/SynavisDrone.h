@@ -67,8 +67,9 @@ static inline FString PrintFormattedTransform(UObject* Object)
     return FString::Printf(TEXT("L{%s}R{%s}S{%s}"), *Transform.GetLocation().ToString(), *Transform.GetRotation().ToString(), *Transform.GetScale3D().ToString());
 
   }
-
 }
+
+
 
 USTRUCT(BlueprintType)
 struct FTransmissionTarget
@@ -149,6 +150,10 @@ public:
 
   UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Network")
     bool RespondWithTiming = false;
+
+  UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Debug")
+    bool LogResponses = false;
+
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
     UTextureRenderTarget2D* UHDSceneTarget;
 
@@ -159,7 +164,10 @@ public:
     float DistanceToLandscape = -1.f;
 
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Network")
-    int DataChannelMaxSize = -1;
+    int DataChannelMaxSize = 32767;
+
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Network")
+    float DataChannelBufferDelay = 0.1f;
 
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
     float TurnWeight = 0.8f;
@@ -230,6 +238,9 @@ public:
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Time")
     bool PrintScreenNewPosition = false;
 
+  UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
+    bool BindPawnToCamera = false;
+
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Time")
     float AutoExposureBias = 0.413f;
 
@@ -244,6 +255,10 @@ public:
 
   UFUNCTION(BlueprintCallable, Category = "View")
     void UpdateCamera();
+
+  UFUNCTION(BlueprintCallable, Category = "View")
+    void SendFrame(){ SendRawFrame(nullptr,false); }
+    void SendRawFrame(TSharedPtr<FJsonObject> Data = nullptr, bool bFreezeID = false);
 
   UFUNCTION(BlueprintCallable, Category = "Network")
     const bool IsInEditor() const;
@@ -264,7 +279,7 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Camera")
     void SetCameraResolution(int Resolution);
 
-  TOptional<TFunctionRef<void(TSharedPtr<FJsonObject>)>> ApplicationProcessInput;
+  TOptional<TFunction<void(TSharedPtr<FJsonObject>)>> ApplicationProcessInput;
 
   FCriticalSection Mutex;
   bool CalculatedMaximumInOffThread = false;
@@ -277,6 +292,12 @@ public:
 
   int32_t GetDecodedSize(char* Source, int32_t Length);
 
+  const uint8* GetBufferLocation() const { return ReceptionBuffer; }
+  const uint64 GetBufferSize() const { return ReceptionBufferSize; }
+
+  UFUNCTION(BlueprintCallable, Category = "Network")
+    int GetTransmissionID();
+
 protected:
   // Called when the game starts or when spawned
   virtual void BeginPlay() override;
@@ -288,7 +309,7 @@ protected:
   AWorldSpawner* WorldSpawner;
 
   TMap<int, TPair<UTextureRenderTarget2D*, UTextureRenderTarget2D*>> RenderTargets;
-
+  int LastTransmissionID = 100;
   FVector NextLocation;
   FVector Velocity;
   FVector SpaceOrigin;
@@ -297,7 +318,7 @@ protected:
   uint64_t SampleSize = 0;
   UMaterial* PostProcessMat;
   float LowestLandscapeBound;
-  class UMaterialInstanceDynamic* CallibratedPostprocess;
+  class UMaterialInstanceDynamic* CallibratedPostprocess{ nullptr };
 
   float FocalLength;
   float TargetFocalLength;
@@ -308,6 +329,7 @@ protected:
   float FrameCaptureCounter;
 
   FJsonObject JsonConfig;
+  int LastProgress = -1;
   FString ReceptionName;
   FString ReceptionFormat;
   uint8* ReceptionBuffer; // this is normally a reinterpret of the below

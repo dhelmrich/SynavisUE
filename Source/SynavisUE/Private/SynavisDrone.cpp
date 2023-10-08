@@ -55,10 +55,28 @@ inline float GetColor(const FColor& c, uint32 i)
   }
 }
 
+inline void WriteStringToSave(FString OutputString, FString FileName = "")
+{
+  if (FileName.IsEmpty())
+  {
+    auto unixtime = FDateTime::Now().ToUnixTimestamp();
+    FileName = FPaths::ProjectDir() + "/Synavisue" + FString::FromInt(unixtime) + ".json";
+  }
+  UE_LOG(LogTemp, Warning, TEXT("Writing to %s"), *FileName);
+  FFileHelper::SaveStringToFile(OutputString, *FileName);
+}
+
+inline void JsonToFile(TSharedPtr<FJsonObject> Json, FString FileName = FString())
+{
+  FString OutputString;
+  TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+  FJsonSerializer::Serialize(Json.ToSharedRef(), Writer);
+  WriteStringToSave(OutputString, FileName);
+}
 
 inline FString GetStringFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, const FString& Default)
 {
-  if (Json->HasTypedField<EJson::String>(Field))
+  if (Json.IsValid() && Json->HasTypedField<EJson::String>(Field))
   {
     return Json->GetStringField(Field);
   }
@@ -67,7 +85,7 @@ inline FString GetStringFieldOr(TSharedPtr<FJsonObject> Json, const FString& Fie
 
 inline int32 GetIntFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, int32 Default)
 {
-  if (Json->HasTypedField<EJson::Number>(Field))
+  if (Json.IsValid() && Json->HasTypedField<EJson::Number>(Field))
   {
     return Json->GetIntegerField(Field);
   }
@@ -76,7 +94,7 @@ inline int32 GetIntFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, i
 
 inline double GetDoubleFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, double Default)
 {
-  if (Json->HasTypedField<EJson::Number>(Field))
+  if (Json.IsValid() && Json->HasTypedField<EJson::Number>(Field))
   {
     return Json->GetNumberField(Field);
   }
@@ -105,8 +123,6 @@ void ASynavisDrone::AppendToMesh(TSharedPtr<FJsonObject> Jason)
 void ASynavisDrone::ParseInput(FString Descriptor)
 {
   double unixtime_start = (RespondWithTiming) ? FPlatformTime::Seconds() : -1;
-
-
   if (Descriptor.IsEmpty())
   {
     UE_LOG(LogTemp, Warning, TEXT("Empty Descriptor"));
@@ -128,12 +144,13 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(Message);
     FJsonSerializer::Deserialize(Reader, Jason);
 
-
     // check if the message is a geometry message
     if (Jason->HasField("type"))
     {
       auto type = Jason->GetStringField("type");
-      //UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
+
+      if (LogResponses)
+        UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
       if (type == "geometry")
       {
         Points.Empty();
@@ -498,6 +515,10 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       {
         // check for settings subobject and put it into member
         LoadFromJSON(Message);
+        if (this->DataChannelMaxSize < 1024)
+        {
+          this->DataChannelMaxSize = 1024;
+        }
       }
       else if (type == "append")
       {
@@ -626,7 +647,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
         else if (Jason->HasField("stop"))
         {
           // compute the size of the output buffer
-          auto OutputSize = GetDecodedSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
+          auto OutputSize = FBase64::GetDecodedDataSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
 
           uint8* OutputBuffer = nullptr;
           // if we got a base64 buffer, we need to decode it
@@ -715,14 +736,9 @@ void ASynavisDrone::ParseInput(FString Descriptor)
             {
               ApplyOrStoreTexture(Jason);
             }
-            else if (ReceptionName == "custom" && ApplicationProcessInput.IsSet())
+            else
             {
-              Jason->SetStringField("name", ReceptionName);
-              Jason->SetNumberField("size", OutputSize);
-              // convert the pointer to a normal number to avoid problems with the json library
-              TSharedPtr<FJsonValueNumber> value = MakeShareable(new FJsonValueNumber(reinterpret_cast<uint64>(ReceptionBuffer)));
-              Jason->SetField("location", value);
-              ApplicationProcessInput.GetValue()(Jason);
+              ReceptionBufferSize = OutputSize;
             }
             //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name),unixtime_start);
           }
@@ -735,49 +751,98 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       }
       else if (type == "receive")
       {
-
+        // in-thread buffer progression message
+        int progress = Jason->GetIntegerField("progress");
+        if (progress == -1)
+        {
+          FTextureRenderTargetResource* Source = nullptr;
+          ReceptionName = GetStringFieldOr(Jason, "camera", "scene");
+          if (ReceptionName == "scene")
+          {
+            Source = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
+          }
+          else
+          {
+            Source = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
+          }
+          TArray<FColor> CamData;
+          FReadSurfaceDataFlags ReadPixelFlags(ERangeCompressionMode::RCM_MinMax);
+          ReadPixelFlags.SetLinearToGamma(true);
+          if (!Source->ReadPixels(CamData, ReadPixelFlags))
+          {
+            SendError("Could not read pixels from camera");
+            return;
+          }
+          ReceptionFormat = FBase64::Encode(reinterpret_cast<uint8*>(CamData.GetData()), CamData.Num() * sizeof(FColor));
+          if (this->IsInEditor())
+          {
+            auto OutputString = ReceptionFormat;
+            // split every 100th character into a new line
+            for (int i = 100; i < OutputString.Len(); i += 100)
+            {
+              OutputString.InsertAt(i, '\n');
+            }
+            auto unixtime = FDateTime::Now().ToUnixTimestamp();
+            auto FileName = FPaths::ProjectDir() + "/Synavisue" + FString::FromInt(unixtime) + ".json";
+            FFileHelper::SaveStringToFile(OutputString, *FileName);
+          }
+          UE_LOG(LogTemp, Warning, TEXT("Read %d pixels from camera amounting to sizes of %d->%d"), CamData.Num(), CamData.Num() * sizeof(FColor), ReceptionFormat.Len());
+          ReceptionBufferSize = 1;
+          ReceptionBufferOffset = 0;
+          auto BaseLength = ReceptionFormat.Len();
+          while (30 * ReceptionBufferSize + (BaseLength / ReceptionBufferSize) > DataChannelMaxSize)
+          {
+            ReceptionBufferSize++;
+          }
+          LastProgress = 0;
+        }
+        else if (progress == -2)
+        {
+          auto missing_chunk = Jason->GetIntegerField("chunk");
+          UE_LOG(LogNet, Warning, TEXT("Received request for missing chunk %d"), missing_chunk);
+          if (missing_chunk < 0 || missing_chunk >= ReceptionBufferSize)
+          {
+            SendError("invalid chunk number");
+            return;
+          }
+          else
+          {
+            FString Response = TEXT("{\"type\":\"receive\",\"data\":\"");
+            auto ChunkSize = ReceptionFormat.Len() / ReceptionBufferSize;
+            const auto Lower = ChunkSize * missing_chunk;
+            auto Upper = FGenericPlatformMath::Min(ChunkSize * (missing_chunk + 1), (uint64_t)ReceptionFormat.Len());
+            if ((ReceptionFormat.Len() - Upper) < ReceptionBufferSize)
+            {
+              Upper = ReceptionFormat.Len();
+            }
+            Response += ReceptionFormat.Mid(Lower, Upper - Lower + 1);
+            Response += TEXT("\", \"chunk\":\"");
+            Response += FString::FromInt(missing_chunk);
+            Response += TEXT("/");
+            Response += FString::FromInt(ReceptionBufferSize);
+            Response += TEXT("\"}");
+            SendResponse(Response);
+          }
+        }
+        else
+        {
+          LastProgress = progress;
+        }
       }
       else if (type == "frame")
       {
+        if (this->DataChannelMaxSize < 0)
+        {
+          SendError("frame was requested but data channel size is not set");
+          return;
+        }
+
         FString res = GetStringFieldOr(Jason, "resolution", "base");
+        FString ImageTarget = GetStringFieldOr(Jason, "camera", "scene");
+
         if (res == "base")
         {
-          auto* irtarget = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
-          auto* srtarget = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
-
-          TPair<TArray<FColor>, TArray<FColor>> CData;
-
-          FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
-          ReadPixelFlags.SetLinearToGamma(true);
-          srtarget->ReadPixels(CData.Value, ReadPixelFlags);
-          irtarget->ReadPixels(CData.Key, ReadPixelFlags);
-
-          FString InfoString = FBase64::Encode(reinterpret_cast<uint8*>(CData.Key.GetData()), CData.Key.Num() * sizeof(FColor));
-          FString SceneString = FBase64::Encode(reinterpret_cast<uint8*>(CData.Value.GetData()), CData.Value.Num() * sizeof(FColor));
-
-          FString Base = TEXT("{\"type\":\"frame\",\"chunk\":");
-          FString End = TEXT("}");
-          int numChunks = 1;
-          while (7+ Base.Len() * numChunks + End.Len() * numChunks + InfoString.Len() / numChunks + SceneString.Len() / numChunks > DataChannelMaxSize)
-          {
-            numChunks++;
-          }
-          // make a task in the game thread to send the chunks
-
-          FGraphEventRef Task = FFunctionGraphTask::CreateAndDispatchWhenReady(
-            [numChunks, InfoString = std::move(InfoString),
-            SceneString = std::move(SceneString), Base = std::move(Base), End = std::move(End),
-            SendResponse = std::bind(&ASynavisDrone::SendResponse, this, std::placeholders::_1, std::placeholders::_2)]()
-            {
-              for (int i = 0; i < numChunks; i++)
-              {
-                int start = i * InfoString.Len() / numChunks;
-                int end = (i + 1) * InfoString.Len() / numChunks;
-                FString Chunk = Base + FString::FromInt(i) + TEXT("/") + FString::FromInt(numChunks) + TEXT(",\"info\":\"") + InfoString.Mid(start, end - start) + TEXT("\",\"scene\":\"") + SceneString.Mid(start, end - start) + End;
-                SendResponse(Chunk, -1);
-              }
-            }, TStatId(), nullptr, ENamedThreads::GameThread);
-
+          SendRawFrame(Jason);
         }
         else if (res == "high")
         {
@@ -792,8 +857,21 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           }
         }
       }
+      else if (type == "apply")
+      {
+        // this is mostly due to a previous texture buffer transmission
+        // we need to apply the texture to the material
+        ApplyOrStoreTexture(Jason);
+        delete[] ReceptionBuffer;
+        ReceptionBuffer = nullptr;
+        ReceptionBufferSize = 0;
+        ReceptionName = "";
+        ReceptionFormat = "";
+        ReceptionBufferOffset = 0;
+      }
       else if (ApplicationProcessInput.IsSet())
       {
+        UE_LOG(LogTemp, Warning, TEXT("Unknown Type, I am delegating this to custom processing."));
         ApplicationProcessInput.GetValue()(Jason);
       }
     }
@@ -948,7 +1026,8 @@ void ASynavisDrone::SendResponse(FString Descriptor, double StartTime)
   }
   FString Response(reinterpret_cast<TCHAR*>(TCHAR_TO_UTF8(*Descriptor)));
   // logging the first 20 characters of the response
-  //UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor.Left(20));
+  if (LogResponses)
+    UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor.Left(20));
   OnPixelStreamingResponse.Broadcast(Response);
 }
 
@@ -1090,6 +1169,7 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       continue;
     }
     auto* prop = GetClass()->FindPropertyByName(FName(*(Key.Key.RightChop(1))));
+
     if (!prop)
     {
       SendError(FString::Printf(TEXT("Property %s not found."), *Key.Key));
@@ -1099,6 +1179,7 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       FNumericProperty* fprop = CastField<FNumericProperty>(prop);
       if (fprop)
       {
+        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *fprop->GetFullName(), Key.Value->AsNumber());
         fprop->SetFloatingPointPropertyValue(fprop->ContainerPtrToValuePtr<void>(this), Key.Value->AsNumber());
       }
     }
@@ -1107,6 +1188,7 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       FNumericProperty* iprop = CastField<FNumericProperty>(prop);
       if (iprop)
       {
+        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *iprop->GetFullName(), (int64)Key.Value->AsNumber());
         iprop->SetIntPropertyValue(iprop->ContainerPtrToValuePtr<void>(this), (int64)Key.Value->AsNumber());
       }
     }
@@ -1145,6 +1227,7 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
       FBoolProperty* bprop = CastField<FBoolProperty>(prop);
       if (bprop)
       {
+        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *bprop->GetFullName(), Key.Value->AsBool());
         bprop->SetPropertyValue(bprop->ContainerPtrToValuePtr<void>(this), Key.Value->AsBool());
       }
     }
@@ -1431,6 +1514,93 @@ void ASynavisDrone::UpdateCamera()
   InfoCam->TextureTarget = InfoCamTarget;
 }
 
+void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
+{
+
+  if (this->DataChannelMaxSize < 0)
+  {
+    return;
+  }
+
+  FString ImageTarget = GetStringFieldOr(Jason, "camera", "scene");
+
+  auto* rtarget = (ImageTarget == "scene")
+    ? SceneCam->TextureTarget->GameThread_GetRenderTargetResource() : InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
+  auto* CameraTarget = (ImageTarget == "scene") ? SceneCam : InfoCam;
+
+  union
+  {
+    struct
+    {
+      float fov{};
+      int width{};
+      int height{};
+      int id;
+      float pos[3]{ 0.f,0.f,0.f };
+      float rot[3]{ 0.f,0.f,0.f };
+    } data;
+    uint8_t rawdata[sizeof(data)]{};
+  } package;
+  package.data.fov = CameraTarget->FOVAngle;
+  package.data.width = CameraTarget->TextureTarget->GetSurfaceWidth();
+  package.data.height = CameraTarget->TextureTarget->GetSurfaceHeight();
+  package.data.pos[0] = CameraTarget->GetComponentLocation().X;
+  package.data.pos[1] = CameraTarget->GetComponentLocation().Y;
+  package.data.pos[2] = CameraTarget->GetComponentLocation().Z;
+  package.data.rot[0] = CameraTarget->GetComponentRotation().Pitch;
+  package.data.rot[1] = CameraTarget->GetComponentRotation().Yaw;
+  package.data.rot[2] = CameraTarget->GetComponentRotation().Roll;
+  package.data.id = (bFreezeID) ? LastTransmissionID : this->GetTransmissionID();
+  FString packageString = FBase64::Encode(package.rawdata, sizeof(package.rawdata));
+
+  TArray<FColor> CData;
+
+  FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
+  ReadPixelFlags.SetLinearToGamma(true);
+  rtarget->ReadPixels(CData, ReadPixelFlags);
+
+  // print transmission ID as hex 
+  FString TransmissionID = FString::Printf(TEXT("%x"), this->GetTransmissionID());
+
+  FString RenderTargetString = FBase64::Encode(reinterpret_cast<uint8*>(CData.GetData()), CData.Num() * sizeof(FColor));
+
+  FString Base = TEXT("{\"type\":\"frame\",\"meta\":\"") + packageString + TEXT("\",\"chunk\":\"");
+  FString End = TEXT("\"}");
+  int numChunks = 1;
+  // lambda for the length of an int in digits
+  const auto intlen = [](int i) -> int
+  {
+    int len = 0;
+    while (i > 0)
+    {
+      i /= 10;
+      len++;
+    }
+    return len;
+  };
+  while (3 + (2 * intlen(numChunks)) + Base.Len() * numChunks + End.Len() * numChunks + RenderTargetString.Len() / numChunks > DataChannelMaxSize)
+  {
+    numChunks++;
+  }
+  // make a task in the game thread to send the chunks
+  FGraphEventRef Task = FFunctionGraphTask::CreateAndDispatchWhenReady(
+    [RenderTargetString = std::move(RenderTargetString), Base = std::move(Base), End = std::move(End),
+    SendResponse = std::bind(&ASynavisDrone::SendResponse, this, std::placeholders::_1, -1),
+    Delay = this->DataChannelBufferDelay, numChunks
+    ]()
+    {
+      for (int i = 0; i < numChunks; i++)
+      {
+        int start = i * RenderTargetString.Len() / numChunks;
+        int end = (i + 1) * RenderTargetString.Len() / numChunks;
+        FString Chunk = Base + FString::FromInt(i) + TEXT("/") + FString::FromInt(numChunks) + TEXT("\",\"data\":\"") + RenderTargetString.Mid(start, end - start) + End;
+        SendResponse(Chunk, -1);
+        // we need to wait a bit, otherwise the chunks might jam
+        FPlatformProcess::Sleep(Delay);
+      }
+    }, TStatId(), nullptr, ENamedThreads::AnyBackgroundHiPriTask);
+}
+
 const bool ASynavisDrone::IsInEditor() const
 {
 #ifdef WITH_EDITOR
@@ -1466,6 +1636,11 @@ int32_t ASynavisDrone::GetDecodedSize(char* Source, int32_t Length)
   return ((Length * 3) / 4) - Padding;
 }
 
+int ASynavisDrone::GetTransmissionID()
+{
+  return ++LastTransmissionID;
+}
+
 // Called when the game starts or when spawned
 void ASynavisDrone::BeginPlay()
 {
@@ -1474,6 +1649,7 @@ void ASynavisDrone::BeginPlay()
 
   InfoCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
   SceneCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
+  
   SpaceOrigin = Flyspace->GetComponentLocation();
   SpaceExtend = Flyspace->GetScaledBoxExtent();
 
@@ -1639,7 +1815,6 @@ EDataTypeIndicator ASynavisDrone::FindType(FProperty* Property)
 
 void ASynavisDrone::ApplyOrStoreTexture(TSharedPtr<FJsonObject> Json)
 {
-
   // require fields: dimension, name, format
   // optional fields: data
   int x, y;
@@ -1707,7 +1882,9 @@ void ASynavisDrone::Tick(float DeltaTime)
   Super::Tick(DeltaTime);
   // fetch unix time
   const int32 Now = static_cast<int32>(FDateTime::UtcNow().ToUnixTimestamp());
-  UGameplayStatics::GetPlayerPawn(GetWorld(), 0)->SetActorLocation(GetActorLocation());
+  if (BindPawnToCamera)
+    UGameplayStatics::GetPlayerPawn(GetWorld(), 0)->SetActorLocation(GetActorLocation());
+
   FrameCaptureCounter -= DeltaTime;
   FVector Distance = NextLocation - GetActorLocation();
   if (DistanceToLandscape > 0.f)
@@ -1738,7 +1915,16 @@ void ASynavisDrone::Tick(float DeltaTime)
     Velocity = Velocity / Velocity.Size();
     SetActorLocation(GetActorLocation() + (Velocity * DeltaTime * MaxVelocity));
     if (!EditorOrientedCamera)
+    {
       SetActorRotation(Velocity.ToOrientationRotator());
+      // get the player controller
+      APlayerController* PlayerController = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+      if (PlayerController)
+      {
+        // set its rotation
+        PlayerController->SetControlRotation(Velocity.ToOrientationRotator());
+      }
+    }
     if (DistanceToLandscape > 0.f)
     {
       EnsureDistancePreservation();
@@ -1809,30 +1995,35 @@ void ASynavisDrone::Tick(float DeltaTime)
   // prepare texture for storage
   if (FrameCaptureTime > 0.f && FrameCaptureCounter <= 0.f)
   {
-    auto* irtarget = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
-    auto* srtarget = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
-
-    TPair<TArray<FColor>, TArray<FColor>> Data;
-    TPair<TArray<FColor>, TArray<FColor>> SData;
-
-    FReadSurfaceDataFlags ReadPixelFlags(RCM_UNorm);
-    ReadPixelFlags.SetLinearToGamma(true);
-    srtarget->ReadPixels(Data.Value, ReadPixelFlags);
-    irtarget->ReadPixels(Data.Key, ReadPixelFlags);
-
-    FImageUtils::CropAndScaleImage(InfoCam->TextureTarget->GetSurfaceWidth(), InfoCam->TextureTarget->GetSurfaceHeight(),
-      RawDataResolution, RawDataResolution, Data.Key, SData.Key);
-    FImageUtils::CropAndScaleImage(SceneCam->TextureTarget->GetSurfaceWidth(), SceneCam->TextureTarget->GetSurfaceHeight(),
-      RawDataResolution, RawDataResolution, Data.Value, SData.Value);
-
-    FString InfoString = FBase64::Encode(reinterpret_cast<uint8*>(SData.Key.GetData()), SData.Key.Num() * sizeof(FColor));
-    FString SceneString = FBase64::Encode(reinterpret_cast<uint8*>(SData.Value.GetData()), SData.Value.Num() * sizeof(FColor));
-    auto response = FString::Printf(TEXT("{\"type\":\"frame\",\"time\":%d,\"data\":\"%s\", \"scene\":\"%s\"}"), Now, *InfoString, *SceneString);
-    UE_LOG(LogActor, Warning, TEXT("Sending frames of length %d"), response.Len());
-    SendResponse(response);
-
+    SendRawFrame(nullptr, false);
     FrameCaptureCounter = FrameCaptureTime;
   }
 
-
+  if (LastProgress >= 0 && ReceptionBufferOffset < ReceptionBufferSize)
+  {
+    // ReceptionBufferOffset is our chunk, LastProgress is last received chucnk
+    FString Response = TEXT("{\"type\":\"receive\",\"data\":\"");
+    auto ChunkSize = ReceptionFormat.Len() / ReceptionBufferSize;
+    const auto Lower = ChunkSize * ReceptionBufferOffset;
+    auto Upper = FGenericPlatformMath::Min(ChunkSize * (ReceptionBufferOffset + 1), (uint64_t)ReceptionFormat.Len());
+    if ((ReceptionFormat.Len() - Upper) < ReceptionBufferSize)
+    {
+      Upper = ReceptionFormat.Len();
+      LastProgress = -1;
+    }
+    const auto chunk = ReceptionFormat.Mid(Lower, Upper - Lower);
+    Response += chunk;
+    Response += TEXT("\", \"chunk\":\"");
+    Response += FString::FromInt(ReceptionBufferOffset);
+    Response += TEXT("/");
+    Response += FString::FromInt(ReceptionBufferSize);
+    Response += TEXT("\"}");
+    ReceptionBufferOffset++;
+    if (LogResponses)
+    {
+      UE_LOG(LogActor, Warning, TEXT("Sending chunk %d of %d"), ReceptionBufferOffset, ReceptionBufferSize);
+      UE_LOG(LogActor, Warning, TEXT("First and last 20 charactes of chunk %d: %s"), ReceptionBufferOffset, *(chunk.Mid(0, 20) + TEXT("...") + chunk.Mid(chunk.Len() - 20, 20)))
+    }
+    SendResponse(Response);
+  }
 }
