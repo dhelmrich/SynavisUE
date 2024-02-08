@@ -18,7 +18,6 @@
 // callback definition for blueprints
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPixelStreamingResponseCallback, FString, Message);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPixelStreamingDataCallback, TArray<int>, Data);
-
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_SixParams(FPixelStreamingReceptionCallback, const TArray<FVector>&, Points, const TArray<FVector>&, Normals, const TArray<int>&, Triangles, const TArray<FVector2D>&, TexCoords, const TArray<float>&, Values, float, Time);
 
 // forward
@@ -75,7 +74,7 @@ USTRUCT(BlueprintType)
 struct FTransmissionTarget
 {
   GENERATED_BODY()
-    UObject* Object;
+  UObject* Object;
   FProperty* Property;
   EDataTypeIndicator DataType;
   FString Name;
@@ -89,9 +88,11 @@ class SYNAVISUE_API ASynavisDrone : public AActor
   GENERATED_BODY()
 
 public:
-
   UFUNCTION(BlueprintCallable, Category = "Network")
-    void ParseInput(FString Descriptor);
+  void ParseInput(FString Descriptor);
+
+  void JsonCommand(TSharedPtr<FJsonObject> Jason, double start = -1);
+
   void ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason);
   // Sets default values for this actor's properties
   ASynavisDrone();
@@ -121,6 +122,7 @@ public:
 
   UFUNCTION(BlueprintCallable, Category = "Actor")
     void LoadFromJSON(FString JasonString = "");
+  void ApplyFromJSON(TSharedPtr<FJsonObject> Jason);	
 
   UFUNCTION(BlueprintCallable, Category = "Actor")
     FTransform FindGoodTransformBelowDrone();
@@ -303,6 +305,9 @@ protected:
   virtual void BeginPlay() override;
   virtual void PostInitializeComponents() override;
   EDataTypeIndicator FindType(FProperty* Property);
+
+  // scheduled tasks
+  TArray<TTuple<double, double, TSharedPtr<FJsonObject>>> ScheduledTasks;
 
   void ApplyOrStoreTexture(TSharedPtr<FJsonObject> Json);
 

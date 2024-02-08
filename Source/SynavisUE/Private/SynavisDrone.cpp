@@ -101,6 +101,15 @@ inline double GetDoubleFieldOr(TSharedPtr<FJsonObject> Json, const FString& Fiel
   return Default;
 }
 
+inline bool GetBoolFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, bool Default)
+{
+  if (Json.IsValid() && Json->HasTypedField<EJson::Boolean>(Field))
+  {
+    return Json->GetBoolField(Field);
+  }
+  return Default;
+}
+
 void ASynavisDrone::AppendToMesh(TSharedPtr<FJsonObject> Jason)
 {
   auto* Object = this->GetObjectFromJSON(Jason);
@@ -143,743 +152,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     TSharedPtr<FJsonObject> Jason = MakeShareable(new FJsonObject());
     TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(Message);
     FJsonSerializer::Deserialize(Reader, Jason);
-
-    // check if the message is a geometry message
-    if (Jason->HasField("type"))
-    {
-      auto type = Jason->GetStringField("type");
-
-      if (LogResponses)
-        UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
-      if (type == "geometry")
-      {
-        Points.Empty();
-        Normals.Empty();
-        Triangles.Empty();
-        UVs.Empty();
-        Scalars.Empty();
-        Tangents.Empty();
-        // this is the partitioned transmission of the geometry
-        // We will receive the buffers in chunks and with individual size warnings
-        // Here we prompt the World Spawner to create a new geometry container
-        WorldSpawner->SpawnObject(Jason);
-      }
-      else if (type == "directbase64" || type == "appendbase64")
-      {
-        ParseGeometryFromJson(Jason);
-        FString id;
-        // check which geometry this message is for
-        if (Jason->HasField("id"))
-        {
-          id = Jason->GetStringField("id");
-        }
-        if (type == "appendbase64")
-        {
-          AppendToMesh(Jason);
-        }
-        else
-        {
-          auto* act = WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, Scalars, 0.0, 1.0, UVs, Tangents);
-
-          if (Jason->HasField("random"))
-          {
-            act->SetActorLocation(FVector(FMath::RandRange(-100, 100), FMath::RandRange(-100, 100), FMath::RandRange(0, 100)));
-          }
-        }
-        SendResponse("{\"type\":\"geometry\",\"name\":\"" + id + "\"}", unixtime_start);
-      }
-      else if (type == "parameter")
-      {
-        auto* Target = this->GetObjectFromJSON(Jason);
-        ApplyJSONToObject(Target, Jason.Get());
-        SendResponse("{\"type\":\"parameter\",\"name\":\"" + Target->GetName() + "\"}", unixtime_start);
-      }
-      else if (type == "query")
-      {
-        if (!Jason->HasField("object"))
-        {
-          if (Jason->HasField("spawn"))
-          {
-            FString spawn = Jason->GetStringField("spawn");
-            if (WorldSpawner)
-            {
-              auto cache = WorldSpawner->GetAssetCacheTemp();
-
-              if (spawn == "any")
-              {
-                // return names of all available assets
-                FString message = "{\"type\":\"query\",\"name\":\"spawn\",\"data\":[";
-                TArray<FString> Names = WorldSpawner->GetNamesOfSpawnableTypes();
-                for (int i = 0; i < Names.Num(); ++i)
-                {
-                  message += FString::Printf(TEXT("\"%s\""), (*Names[i]));
-                  if (i < Names.Num() - 1)
-                    message += TEXT(",");
-                }
-                message += "]}";
-                this->SendResponse(message, unixtime_start);
-              }
-              else
-              {
-                // we are still in query mode, so this must mean that spawn parameters should be listed
-                if (cache->HasField(spawn))
-                {
-                  auto asset_json = cache->GetObjectField(spawn);
-                  // the asset json already contains all info
-                  // serialize
-                  FString message;
-                  TSharedRef<TJsonWriter<TCHAR>> Writer = TJsonWriterFactory<TCHAR>::Create(&message);
-                  FJsonSerializer::Serialize(asset_json.ToSharedRef(), Writer);
-                  message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"spawn\",\"data\":%s}"), *message);
-                  this->SendResponse(message, unixtime_start);
-                }
-              }
-            }
-          }
-          else
-          {
-            // respond with names of all actors
-            FString message = "{\"type\":\"query\",\"name\":\"all\",\"data\":[";
-            TArray<AActor*> Actors;
-            UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), Actors);
-            const auto NumActors = Actors.Num();
-            for (auto i = 0; i < NumActors; ++i)
-            {
-              message += FString::Printf(TEXT("\"%s\""), *Actors[i]->GetName());
-              if (i < NumActors - 1)
-                message += TEXT(",");
-            }
-            message += "]}";
-            this->SendResponse(message, unixtime_start);
-          }
-        }
-        else if (Jason->HasField("property"))
-        {
-          auto* Target = this->GetObjectFromJSON(Jason);
-          if (Target != nullptr)
-          {
-            FString Name = Target->GetName();
-            FString Property = Jason->GetStringField("property");
-            FString JsonData = GetJSONFromObjectProperty(Target, Property);
-            FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
-            this->SendResponse(message, unixtime_start);
-          }
-          else
-          {
-            SendError("query request object not found");
-            UE_LOG(LogTemp, Error, TEXT("query request object not found"))
-          }
-        }
-        else
-        {
-          auto* Target = this->GetObjectFromJSON(Jason);
-          if (Target != nullptr)
-          {
-            FString Name = Target->GetName();
-            FString JsonData = ListObjectPropertiesAsJSON(Target);
-            FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
-            this->SendResponse(message, unixtime_start);
-          }
-          else
-          {
-            SendError("query request object not found");
-            UE_LOG(LogTemp, Error, TEXT("query request object not found"))
-          }
-        }
-      }
-      else if (type == "track")
-      {
-        // this is a request to track a property
-        // we need values "object" and "property"
-        if (!Jason->HasField("object") || !Jason->HasField("property"))
-        {
-          SendError("track request needs object and property fields");
-          UE_LOG(LogTemp, Error, TEXT("track request needs object and property fields"))
-        }
-        else
-        {
-          FString ObjectName = Jason->GetStringField("object");
-          FString PropertyName = Jason->GetStringField("property");
-          auto Object = this->GetObjectFromJSON(Jason);
-          if (!Object)
-          {
-            SendError("track request object not found");
-            return;
-          }
-
-          // check if we are already tracking this property
-          if (this->TransmissionTargets.ContainsByPredicate([Object, PropertyName](const FTransmissionTarget& Target)
-            {
-              return Target.Object == Object && Target.Property->GetName() == PropertyName;
-            }))
-          {
-            SendError("track request already tracking this property");
-            return;
-          }
-
-          // check if the property is one of the shortcut properties
-          if (PropertyName == "Position" || PropertyName == "Rotation" || PropertyName == "Scale" || PropertyName == "Transform")
-          {
-            // there is no property to track, but we need to add a transmission target
-            TransmissionTargets.Add({ Object, nullptr, EDataTypeIndicator::Transform, FString::Printf(TEXT("%s.%s"), *ObjectName, *PropertyName) });
-          }
-          else
-          {
-
-            auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
-
-            if (!Property)
-            {
-              SendError("track request Property not found");
-              return;
-            }
-
-            this->TransmissionTargets.Add({ Object, Property, this->FindType(Property),
-              FString::Printf(TEXT("%s.%s"),*ObjectName,*PropertyName) });
-          }
-        }
-      }
-      else if (type == "untrack")
-      {
-        // this is a request to untrack a property
-        // we need values "object" and "property"
-        if (!Jason->HasField("object") || !Jason->HasField("property"))
-        {
-          SendError("untrack request needs object and property fields");
-          UE_LOG(LogTemp, Error, TEXT("untrack request needs object and property fields"))
-        }
-        else
-        {
-          FString ObjectName = Jason->GetStringField("object");
-          FString PropertyName = Jason->GetStringField("property");
-          auto Object = this->GetObjectFromJSON(Jason);
-          if (!Object)
-          {
-            SendError("untrack request object not found");
-            return;
-          }
-          auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
-          if (!Property)
-          {
-            SendError("untrack request Property not found");
-            return;
-          }
-          for (int i = 0; i < this->TransmissionTargets.Num(); ++i)
-          {
-            if (this->TransmissionTargets[i].Object == Object && this->TransmissionTargets[i].Property == Property)
-            {
-              this->TransmissionTargets.RemoveAt(i);
-              break;
-            }
-          }
-        }
-      }
-      else if (type == "command")
-      {
-        // received a command
-        FString Name = Jason->GetStringField("name");
-        if (Name == "reset")
-        {
-          // reset the geometry
-          Points.Empty();
-          Normals.Empty();
-          Triangles.Empty();
-          UVs.Empty();
-        }
-        else if (Name == "frametime")
-        {
-          float frametime = GetWorld()->GetDeltaSeconds();
-          FString message = FString::Printf(TEXT("{\"type\":\"frametime\",\"value\":%f}"), frametime);
-        }
-        else if (Name == "cam")
-        {
-          FString CameraToSwitchTo = Jason->GetStringField("camera");
-          if (CameraToSwitchTo == "info")
-          {
-            UE_LOG(LogActor, Warning, TEXT("Switching to info cam"));
-            OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToInfoCam);
-          }
-          else if (CameraToSwitchTo == "scene")
-          {
-            UE_LOG(LogActor, Warning, TEXT("Switching to scene cam"));
-            OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToSceneCam);
-          }
-          else if (CameraToSwitchTo == "dual")
-          {
-            UE_LOG(LogActor, Warning, TEXT("Switching to dual cam"));
-            OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToBothCams);
-          }
-        }
-        else if (Name == "ignore")
-        {
-          FString CameraToIgnore = Jason->GetStringField("camera");
-          USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
-          auto* Object = this->GetObjectFromJSON(Jason);
-          if (Object->IsA<AActor>())
-          {
-            // try get primitive component
-            auto* ActorObject = Cast<AActor>(Object);
-            SceneCapture->HideActorComponents(ActorObject, true);
-          }
-          else
-          {
-            // try get primitive component
-            auto* PrimitiveObject = Cast<UPrimitiveComponent>(Object);
-            if (PrimitiveObject)
-            {
-              SceneCapture->HideComponent(PrimitiveObject);
-            }
-          }
-        }
-        else if (Name == "Show")
-        {
-          FString CameraToIgnore = Jason->GetStringField("camera");
-          USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
-          auto* Object = this->GetObjectFromJSON(Jason);
-          if (Object->IsA<AActor>())
-          {
-            // try get primitive component
-            auto* ActorObject = Cast<AActor>(Object);
-            SceneCapture->ShowOnlyActorComponents(ActorObject, true);
-          }
-          else
-          {
-            // try get primitive component
-            auto* PrimitiveObject = Cast<UPrimitiveComponent>(Object);
-            if (PrimitiveObject)
-            {
-              SceneCapture->ShowOnlyComponent(PrimitiveObject);
-            }
-          }
-        }
-        else if (Name == "HideAll")
-        {
-          FString CameraToIgnore = Jason->GetStringField("camera");
-          bool Value = Jason->GetBoolField("value");
-          USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
-          SceneCapture->PrimitiveRenderMode = Value ? ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList : ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
-        }
-        else if (Name == "RawData")
-        {
-          this->FrameCaptureTime = GetDoubleFieldOr(Jason, "framecapturetime", 10.0);
-          this->FrameCaptureCounter = this->FrameCaptureTime;
-        }
-        else if (Name == "navigate")
-        {
-          AutoNavigate = false;
-          NextLocation = FVector(Jason->GetNumberField("x"), Jason->GetNumberField("y"), Jason->GetNumberField("z"));
-        }
-      }
-      else if (type == "info")
-      {
-        if (Jason->HasField("frametime"))
-        {
-          const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
-          SendResponse(Response, unixtime_start);
-        }
-        else if (Jason->HasField("memory"))
-        {
-          const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
-          SendResponse(Response, unixtime_start);
-        }
-        else if (Jason->HasField("fps"))
-        {
-          const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
-          SendResponse(Response, unixtime_start);
-        }
-        else if (Jason->HasField("object"))
-        {
-          FString RequestedObjectName = Jason->GetStringField("object");
-          TArray<AActor*> FoundActors;
-        }
-        else if (Jason->HasField("DataChannelSize"))
-        {
-          int DataChannelSize = Jason->GetIntegerField("DataChannelSize");
-          this->DataChannelMaxSize = DataChannelSize;
-        }
-      }
-      else if (type == "console")
-      {
-        if (Jason->HasField("command"))
-        {
-          FString Command = Jason->GetStringField("command");
-          UE_LOG(LogTemp, Warning, TEXT("Console command %s"), *Command);
-          auto* Controller = GetWorld()->GetFirstPlayerController();
-          if (Controller)
-          {
-            Controller->ConsoleCommand(Command);
-          }
-        }
-      }
-      else if (type == "settings")
-      {
-        // check for settings subobject and put it into member
-        LoadFromJSON(Message);
-        if (this->DataChannelMaxSize < 1024)
-        {
-          this->DataChannelMaxSize = 1024;
-        }
-      }
-      else if (type == "append")
-      {
-        if (Jason->HasField("object"))
-        {
-          UE_LOG(LogTemp, Warning, TEXT("Request to append geometry to object"));
-          AppendToMesh(Jason);
-        }
-      }
-      else if (type == "spawn")
-      {
-        if (Jason->HasField("object") && Jason->GetStringField("object") == "ProceduralMeshComponent")
-        {
-          UE_LOG(LogTemp, Warning, TEXT("Spawn request for ProceduralMeshComponent"));
-          int32 section_index = 0;
-          if (Jason->HasField("section"))
-          {
-            section_index = Jason->GetIntegerField("section");
-          }
-          auto name = this->WorldSpawner->SpawnObject(Jason);
-          UProceduralMeshComponent* Mesh = Cast<UProceduralMeshComponent>(WorldSpawner->GetHeldComponent());
-          TArray<FColor> Colors;
-          if (Scalars.Num() == Points.Num())
-          {
-            // we have scalars, so we need to convert them to colors
-            // just as an example, we use a bluered
-            // we can use the same color map for all scalars
-            // but we need to know the range of the scalars
-            float min = Scalars[0];
-            float max = Scalars[0];
-            for (auto scalar : Scalars)
-            {
-              if (scalar < min)
-              {
-                min = scalar;
-              }
-              if (scalar > max)
-              {
-                max = scalar;
-              }
-            }
-            for (auto scalar : Scalars)
-            {
-              float t = (scalar - min) / (max - min);
-              FLinearColor color = FLinearColor::LerpUsingHSV(FLinearColor(1, 0, 0), FLinearColor(0, 0, 1), t);
-              Colors.Add(color.ToFColor(false));
-            }
-          }
-          Mesh->CreateMeshSection(section_index, Points, Triangles, Normals, UVs, Colors, Tangents, true);
-        }
-        else if (this->WorldSpawner)
-        {
-          auto name = this->WorldSpawner->SpawnObject(Jason);
-          SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name), unixtime_start);
-        }
-        else
-        {
-          UE_LOG(LogTemp, Warning, TEXT("No world spawner available"));
-          SendError("No world spawner available");
-        }
-      }
-      else if (type == "texture")
-      {
-
-        FString TexData = GetStringFieldOr(Jason, "data", "");
-        // check if the transmission is direct
-        if (!TexData.IsEmpty())
-        {
-          auto size = FBase64::GetDecodedDataSize(TexData);
-          ReceptionBuffer = new uint8[size];
-          FBase64::Decode(*TexData, size, ReceptionBuffer);
-          ApplyOrStoreTexture(Jason);
-        }
-      }
-      else if (type == "buffer")
-      {
-        FString name;
-        if (Jason->HasField("start") && Jason->HasField("size") && Jason->HasField("format"))
-        {
-
-          name = Jason->GetStringField("start");
-          auto Format = Jason->GetStringField("format");
-          auto size = Jason->GetIntegerField("size");
-          ReceptionBufferSize = size;
-          ReceptionFormat = Format;
-          ReceptionName = name;
-          ReceptionBufferOffset = 0;
-          // if the format is binary, we do not need to do anything
-          // if the format is base64, we need to decode the data and allocate a buffer
-          if (Format == "base64")
-          {
-            ReceptionBuffer = new uint8[size];
-          }
-          else if (ReceptionName == "points")
-          {
-            Points.SetNum(size / sizeof(FVector));
-            ReceptionBuffer = reinterpret_cast<uint8*>(Points.GetData());
-          }
-          else if (ReceptionName == "normals")
-          {
-            Points.SetNum(size / sizeof(FVector));
-            ReceptionBuffer = reinterpret_cast<uint8*>(Normals.GetData());
-          }
-          else if (ReceptionName == "triangles")
-          {
-            Triangles.SetNum(size / sizeof(int32));
-            ReceptionBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
-          }
-          else if (ReceptionName == "uvs")
-          {
-            UVs.SetNum(size / sizeof(FVector2D));
-            ReceptionBuffer = reinterpret_cast<uint8*>(UVs.GetData());
-          }
-          else if (ReceptionName == "texture" || ReceptionName == "custom")
-          {
-            ReceptionBuffer = new uint8[size];
-          }
-          else
-          {
-            UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
-            SendError("Unknown buffer name");
-            return;
-          }
-          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name), unixtime_start);
-        }
-        else if (Jason->HasField("stop"))
-        {
-          // compute the size of the output buffer
-          auto OutputSize = FBase64::GetDecodedDataSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
-
-          uint8* OutputBuffer = nullptr;
-          // if we got a base64 buffer, we need to decode it
-          if (ReceptionFormat == "base64")
-          {
-            if (ReceptionName == "points")
-            {
-              Points.SetNum(OutputSize / sizeof(FVector));
-              OutputBuffer = reinterpret_cast<uint8*>(Points.GetData());
-            }
-            else if (ReceptionName == "normals")
-            {
-              Normals.SetNum(OutputSize / sizeof(FVector));
-              OutputBuffer = reinterpret_cast<uint8*>(Normals.GetData());
-            }
-            else if (ReceptionName == "triangles")
-            {
-              Triangles.SetNum(OutputSize / sizeof(int32));
-              OutputBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
-            }
-            else if (ReceptionName == "uvs")
-            {
-              UVs.SetNum(OutputSize / sizeof(FVector2D));
-              OutputBuffer = reinterpret_cast<uint8*>(UVs.GetData());
-            }
-            else if (ReceptionName == "tangents")
-            {
-              // here we need to allocate a buffer for the tangents with FVector
-              // This is because we do not transmit the fourth component of the tangent
-              Tangents.SetNum(OutputSize / sizeof(FVector));
-              // parse the vectors into new FProcMeshTangents and copy them into the array
-              float* TangentData = reinterpret_cast<float*>(ReceptionBuffer);
-              for (int i = 0; i < OutputSize / sizeof(FVector); i++)
-              {
-                Tangents[i].TangentX = FVector(TangentData[i * 3], TangentData[i * 3 + 1], TangentData[i * 3 + 2]);
-                Tangents[i].bFlipTangentY = false;
-              }
-            }
-            else if (ReceptionName == "texture" || ReceptionName == "custom")
-            {
-
-              OutputBuffer = new uint8[OutputSize];
-            }
-            else
-            {
-              UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
-              SendError("Unknown buffer name");
-              return;
-            }
-
-            // use built-in unreal functions as long as the in-place decoding does not work
-            // Create FString from Reception Buffer
-
-            int32_t EndBuffer = 0;
-            // find the end of the base64 string by searching for the first occurence of a non-base64 character
-            for (; EndBuffer < ReceptionBufferSize; EndBuffer++)
-            {
-              // manually check the character against the base64 alphabet
-              // break when we find the first character that is part of the base64 alphabet
-              // this is because we start from the end of the string
-              const char c = reinterpret_cast<const char*>(ReceptionBuffer)[ReceptionBufferSize - EndBuffer - 1];
-              if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-                || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r'))
-              {
-                break;
-              }
-            }
-
-            // Decode the Base64 String
-            // we need to remove the last 6 characters, because they are not part of the base64 string
-            // this is because the base64 string is padded with 6 characters
-            if (!FBase64::Decode(reinterpret_cast<const ANSICHAR*>(ReceptionBuffer), ReceptionBufferSize - EndBuffer, OutputBuffer))
-            {
-              UE_LOG(LogTemp, Warning, TEXT("Could not decode base64 string"));
-              // for debug purposes, we write the first 20 letters of the string onto log
-              //UE_LOG(LogTemp, Warning, TEXT("First 20 letters of string: %s"), *Base64String.Left(20));
-              //UE_LOG(LogTemp, Warning, TEXT("Last 20 letters of string: %s"), *Base64String.Right(20));
-              SendError("Could not decode base64 string");
-              return;
-            }
-            delete[] ReceptionBuffer;
-            ReceptionBuffer = OutputBuffer;
-            name = Jason->GetStringField("stop");
-            SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize), unixtime_start);
-            if (ReceptionName == "texture")
-            {
-              ApplyOrStoreTexture(Jason);
-            }
-            else
-            {
-              ReceptionBufferSize = OutputSize;
-            }
-            //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name),unixtime_start);
-          }
-        }
-        else
-        {
-          SendError("buffer request needs start or stop field");
-          return;
-        }
-      }
-      else if (type == "receive")
-      {
-        // in-thread buffer progression message
-        int progress = Jason->GetIntegerField("progress");
-        if (progress == -1)
-        {
-          FTextureRenderTargetResource* Source = nullptr;
-          ReceptionName = GetStringFieldOr(Jason, "camera", "scene");
-          if (ReceptionName == "scene")
-          {
-            Source = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
-          }
-          else
-          {
-            Source = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
-          }
-          TArray<FColor> CamData;
-          FReadSurfaceDataFlags ReadPixelFlags(ERangeCompressionMode::RCM_MinMax);
-          ReadPixelFlags.SetLinearToGamma(true);
-          if (!Source->ReadPixels(CamData, ReadPixelFlags))
-          {
-            SendError("Could not read pixels from camera");
-            return;
-          }
-          ReceptionFormat = FBase64::Encode(reinterpret_cast<uint8*>(CamData.GetData()), CamData.Num() * sizeof(FColor));
-          if (this->IsInEditor())
-          {
-            auto OutputString = ReceptionFormat;
-            // split every 100th character into a new line
-            for (int i = 100; i < OutputString.Len(); i += 100)
-            {
-              OutputString.InsertAt(i, '\n');
-            }
-            auto unixtime = FDateTime::Now().ToUnixTimestamp();
-            auto FileName = FPaths::ProjectDir() + "/Synavisue" + FString::FromInt(unixtime) + ".json";
-            FFileHelper::SaveStringToFile(OutputString, *FileName);
-          }
-          UE_LOG(LogTemp, Warning, TEXT("Read %d pixels from camera amounting to sizes of %d->%d"), CamData.Num(), CamData.Num() * sizeof(FColor), ReceptionFormat.Len());
-          ReceptionBufferSize = 1;
-          ReceptionBufferOffset = 0;
-          auto BaseLength = ReceptionFormat.Len();
-          while (30 * ReceptionBufferSize + (BaseLength / ReceptionBufferSize) > DataChannelMaxSize)
-          {
-            ReceptionBufferSize++;
-          }
-          LastProgress = 0;
-        }
-        else if (progress == -2)
-        {
-          auto missing_chunk = Jason->GetIntegerField("chunk");
-          UE_LOG(LogNet, Warning, TEXT("Received request for missing chunk %d"), missing_chunk);
-          if (missing_chunk < 0 || missing_chunk >= ReceptionBufferSize)
-          {
-            SendError("invalid chunk number");
-            return;
-          }
-          else
-          {
-            FString Response = TEXT("{\"type\":\"receive\",\"data\":\"");
-            auto ChunkSize = ReceptionFormat.Len() / ReceptionBufferSize;
-            const auto Lower = ChunkSize * missing_chunk;
-            auto Upper = FGenericPlatformMath::Min(ChunkSize * (missing_chunk + 1), (uint64_t)ReceptionFormat.Len());
-            if ((ReceptionFormat.Len() - Upper) < ReceptionBufferSize)
-            {
-              Upper = ReceptionFormat.Len();
-            }
-            Response += ReceptionFormat.Mid(Lower, Upper - Lower + 1);
-            Response += TEXT("\", \"chunk\":\"");
-            Response += FString::FromInt(missing_chunk);
-            Response += TEXT("/");
-            Response += FString::FromInt(ReceptionBufferSize);
-            Response += TEXT("\"}");
-            SendResponse(Response);
-          }
-        }
-        else
-        {
-          LastProgress = progress;
-        }
-      }
-      else if (type == "frame")
-      {
-        if (this->DataChannelMaxSize < 0)
-        {
-          SendError("frame was requested but data channel size is not set");
-          return;
-        }
-
-        FString res = GetStringFieldOr(Jason, "resolution", "base");
-        FString ImageTarget = GetStringFieldOr(Jason, "camera", "scene");
-
-        if (res == "base")
-        {
-          SendRawFrame(Jason);
-        }
-        else if (res == "high")
-        {
-          int factor = GetIntFieldOr(Jason, "factor", 1);
-          // this is delegated to HighResScreenshot
-          // we need to set the resolution of the screenshot
-          // this is done by setting the console variable
-          auto* controller = GetWorld()->GetFirstPlayerController();
-          if (controller)
-          {
-            controller->ConsoleCommand(FString::Printf(TEXT("HighResShot %d"), factor));
-          }
-        }
-      }
-      else if (type == "apply")
-      {
-        // this is mostly due to a previous texture buffer transmission
-        // we need to apply the texture to the material
-        ApplyOrStoreTexture(Jason);
-        delete[] ReceptionBuffer;
-        ReceptionBuffer = nullptr;
-        ReceptionBufferSize = 0;
-        ReceptionName = "";
-        ReceptionFormat = "";
-        ReceptionBufferOffset = 0;
-      }
-      else if (ApplicationProcessInput.IsSet())
-      {
-        UE_LOG(LogTemp, Warning, TEXT("Unknown Type, I am delegating this to custom processing."));
-        ApplicationProcessInput.GetValue()(Jason);
-      }
-    }
-    else
-    {
-      UE_LOG(LogTemp, Warning, TEXT("No type field in JSON"));
-      SendError("No type field in JSON");
-    }
+    JsonCommand(Jason, unixtime_start);
   }
   else
   {
@@ -899,6 +172,804 @@ void ASynavisDrone::ParseInput(FString Descriptor)
       ReceptionBufferOffset += size;
       SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName), unixtime_start);
     }
+  }
+}
+
+void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_start)
+{
+  // check if the message is a geometry message
+  if (Jason->HasField("type"))
+  {
+    auto type = Jason->GetStringField("type");
+
+    if (LogResponses)
+      UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
+    if (type == "geometry")
+    {
+      Points.Empty();
+      Normals.Empty();
+      Triangles.Empty();
+      UVs.Empty();
+      Scalars.Empty();
+      Tangents.Empty();
+      // this is the partitioned transmission of the geometry
+      // We will receive the buffers in chunks and with individual size warnings
+      // Here we prompt the World Spawner to create a new geometry container
+      WorldSpawner->SpawnObject(Jason);
+    }
+    else if (type == "directbase64" || type == "appendbase64")
+    {
+      ParseGeometryFromJson(Jason);
+      FString id;
+      // check which geometry this message is for
+      if (Jason->HasField("id"))
+      {
+        id = Jason->GetStringField("id");
+      }
+      if (type == "appendbase64")
+      {
+        AppendToMesh(Jason);
+      }
+      else
+      {
+        auto* act = WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, Scalars, 0.0, 1.0, UVs, Tangents);
+
+        if (Jason->HasField("random"))
+        {
+          act->SetActorLocation(FVector(FMath::RandRange(-100, 100), FMath::RandRange(-100, 100), FMath::RandRange(0, 100)));
+        }
+      }
+      SendResponse("{\"type\":\"geometry\",\"name\":\"" + id + "\"}", unixtime_start);
+    }
+    else if (type == "filegeometry")
+    {
+      // read file name
+      auto fname = Jason->GetStringField("file");
+      // open file in binary mode
+      auto& file = FPlatformFileManager::Get().GetPlatformFile();
+      if (file.FileExists(*fname))
+      {
+        TArray<uint8> data;
+        if (FFileHelper::LoadFileToArray(data, *fname, 0))
+        {
+          // first data pointer
+          auto* ptr = data.GetData();
+          // uint64 info on number of points
+          uint64* num_points = reinterpret_cast<uint64*>(ptr);
+          ptr += sizeof(uint64);
+          // points
+          Points.SetNum(*num_points);
+          FMemory::Memcpy(Points.GetData(), ptr, *num_points * sizeof(FVector));
+          ptr += *num_points * sizeof(FVector);
+          // uint64 info on number of indices
+          uint64* num_indices = reinterpret_cast<uint64*>(ptr);
+          ptr += sizeof(uint64);
+          // indices
+          Triangles.SetNum(*num_indices);
+          FMemory::Memcpy(Triangles.GetData(), ptr, *num_indices * sizeof(int32));
+          ptr += *num_indices * sizeof(int32);
+          // uint64 info on number of normals
+          uint64* num_normals = reinterpret_cast<uint64*>(ptr);
+          ptr += sizeof(uint64);
+          // normals
+          Normals.SetNum(*num_normals);
+          FMemory::Memcpy(Normals.GetData(), ptr, *num_normals * sizeof(FVector));
+          ptr += *num_normals * sizeof(FVector);
+          // uint64 info on number of uvs
+          uint64* num_uvs = reinterpret_cast<uint64*>(ptr);
+          ptr += sizeof(uint64);
+          // uvs
+          UVs.SetNum(*num_uvs);
+          FMemory::Memcpy(UVs.GetData(), ptr, *num_uvs * sizeof(FVector2D));
+          ptr += *num_uvs * sizeof(FVector2D);
+        }
+        // create mesh
+        WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, {}, 0.0, 1.0, {}, {});
+      }
+      // we consumed the input, delete the file
+      file.DeleteFile(*fname);
+    }
+    else if (type == "parameter")
+    {
+      auto* Target = this->GetObjectFromJSON(Jason);
+      ApplyJSONToObject(Target, Jason.Get());
+      SendResponse("{\"type\":\"parameter\",\"name\":\"" + Target->GetName() + "\"}", unixtime_start);
+    }
+    else if (type == "query")
+    {
+      if (!Jason->HasField("object"))
+      {
+        if (Jason->HasField("spawn"))
+        {
+          FString spawn = Jason->GetStringField("spawn");
+          if (WorldSpawner)
+          {
+            auto cache = WorldSpawner->GetAssetCacheTemp();
+
+            if (spawn == "any")
+            {
+              // return names of all available assets
+              FString message = "{\"type\":\"query\",\"name\":\"spawn\",\"data\":[";
+              TArray<FString> Names = WorldSpawner->GetNamesOfSpawnableTypes();
+              for (int i = 0; i < Names.Num(); ++i)
+              {
+                message += FString::Printf(TEXT("\"%s\""), (*Names[i]));
+                if (i < Names.Num() - 1)
+                  message += TEXT(",");
+              }
+              message += "]}";
+              this->SendResponse(message, unixtime_start);
+            }
+            else
+            {
+              // we are still in query mode, so this must mean that spawn parameters should be listed
+              if (cache->HasField(spawn))
+              {
+                auto asset_json = cache->GetObjectField(spawn);
+                // the asset json already contains all info
+                // serialize
+                FString message;
+                TSharedRef<TJsonWriter<TCHAR>> Writer = TJsonWriterFactory<TCHAR>::Create(&message);
+                FJsonSerializer::Serialize(asset_json.ToSharedRef(), Writer);
+                message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"spawn\",\"data\":%s}"), *message);
+                this->SendResponse(message, unixtime_start);
+              }
+            }
+          }
+        }
+        else
+        {
+          // respond with names of all actors
+          FString message = "{\"type\":\"query\",\"name\":\"all\",\"data\":[";
+          TArray<AActor*> Actors;
+          UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), Actors);
+          const auto NumActors = Actors.Num();
+          for (auto i = 0; i < NumActors; ++i)
+          {
+            message += FString::Printf(TEXT("\"%s\""), *Actors[i]->GetName());
+            if (i < NumActors - 1)
+              message += TEXT(",");
+          }
+          message += "]}";
+          this->SendResponse(message, unixtime_start);
+        }
+      }
+      else if (Jason->HasField("property"))
+      {
+        auto* Target = this->GetObjectFromJSON(Jason);
+        if (Target != nullptr)
+        {
+          FString Name = Target->GetName();
+          FString Property = Jason->GetStringField("property");
+          FString JsonData = GetJSONFromObjectProperty(Target, Property);
+          FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
+          this->SendResponse(message, unixtime_start);
+        }
+        else
+        {
+          SendError("query request object not found");
+          UE_LOG(LogTemp, Error, TEXT("query request object not found"))
+        }
+      }
+      else
+      {
+        auto* Target = this->GetObjectFromJSON(Jason);
+        if (Target != nullptr)
+        {
+          FString Name = Target->GetName();
+          FString JsonData = ListObjectPropertiesAsJSON(Target);
+          FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
+          this->SendResponse(message, unixtime_start);
+        }
+        else
+        {
+          SendError("query request object not found");
+          UE_LOG(LogTemp, Error, TEXT("query request object not found"))
+        }
+      }
+    }
+    else if (type == "track")
+    {
+      // this is a request to track a property
+      // we need values "object" and "property"
+      if (!Jason->HasField("object") || !Jason->HasField("property"))
+      {
+        SendError("track request needs object and property fields");
+        UE_LOG(LogTemp, Error, TEXT("track request needs object and property fields"))
+      }
+      else
+      {
+        FString ObjectName = Jason->GetStringField("object");
+        FString PropertyName = Jason->GetStringField("property");
+        auto Object = this->GetObjectFromJSON(Jason);
+        if (!Object)
+        {
+          SendError("track request object not found");
+          return;
+        }
+
+        // check if we are already tracking this property
+        if (this->TransmissionTargets.ContainsByPredicate([Object, PropertyName](const FTransmissionTarget& Target)
+          {
+            return Target.Object == Object && Target.Property->GetName() == PropertyName;
+          }))
+        {
+          SendError("track request already tracking this property");
+          return;
+        }
+
+        // check if the property is one of the shortcut properties
+        if (PropertyName == "Position" || PropertyName == "Rotation" || PropertyName == "Scale" || PropertyName == "Transform")
+        {
+          // there is no property to track, but we need to add a transmission target
+          TransmissionTargets.Add({ Object, nullptr, EDataTypeIndicator::Transform, FString::Printf(TEXT("%s.%s"), *ObjectName, *PropertyName) });
+        }
+        else
+        {
+
+          auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+
+          if (!Property)
+          {
+            SendError("track request Property not found");
+            return;
+          }
+
+          this->TransmissionTargets.Add({ Object, Property, this->FindType(Property),
+            FString::Printf(TEXT("%s.%s"),*ObjectName,*PropertyName) });
+        }
+      }
+    }
+    else if (type == "untrack")
+    {
+      // this is a request to untrack a property
+      // we need values "object" and "property"
+      if (!Jason->HasField("object") || !Jason->HasField("property"))
+      {
+        SendError("untrack request needs object and property fields");
+        UE_LOG(LogTemp, Error, TEXT("untrack request needs object and property fields"))
+      }
+      else
+      {
+        FString ObjectName = Jason->GetStringField("object");
+        FString PropertyName = Jason->GetStringField("property");
+        auto Object = this->GetObjectFromJSON(Jason);
+        if (!Object)
+        {
+          SendError("untrack request object not found");
+          return;
+        }
+        auto Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+        if (!Property)
+        {
+          SendError("untrack request Property not found");
+          return;
+        }
+        for (int i = 0; i < this->TransmissionTargets.Num(); ++i)
+        {
+          if (this->TransmissionTargets[i].Object == Object && this->TransmissionTargets[i].Property == Property)
+          {
+            this->TransmissionTargets.RemoveAt(i);
+            break;
+          }
+        }
+      }
+    }
+    else if (type == "command")
+    {
+      // received a command
+      FString Name = Jason->GetStringField("name");
+      if (Name == "reset")
+      {
+        // reset the geometry
+        Points.Empty();
+        Normals.Empty();
+        Triangles.Empty();
+        UVs.Empty();
+      }
+      else if (Name == "frametime")
+      {
+        float frametime = GetWorld()->GetDeltaSeconds();
+        FString message = FString::Printf(TEXT("{\"type\":\"frametime\",\"value\":%f}"), frametime);
+      }
+      else if (Name == "cam")
+      {
+        FString CameraToSwitchTo = Jason->GetStringField("camera");
+        if (CameraToSwitchTo == "info")
+        {
+          UE_LOG(LogActor, Warning, TEXT("Switching to info cam"));
+          OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToInfoCam);
+        }
+        else if (CameraToSwitchTo == "scene")
+        {
+          UE_LOG(LogActor, Warning, TEXT("Switching to scene cam"));
+          OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToSceneCam);
+        }
+        else if (CameraToSwitchTo == "dual")
+        {
+          UE_LOG(LogActor, Warning, TEXT("Switching to dual cam"));
+          OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToBothCams);
+        }
+      }
+      else if (Name == "ignore")
+      {
+        FString CameraToIgnore = Jason->GetStringField("camera");
+        USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
+        auto* Object = this->GetObjectFromJSON(Jason);
+        if (Object->IsA<AActor>())
+        {
+          // try get primitive component
+          auto* ActorObject = Cast<AActor>(Object);
+          SceneCapture->HideActorComponents(ActorObject, true);
+        }
+        else
+        {
+          // try get primitive component
+          auto* PrimitiveObject = Cast<UPrimitiveComponent>(Object);
+          if (PrimitiveObject)
+          {
+            SceneCapture->HideComponent(PrimitiveObject);
+          }
+        }
+      }
+      else if (Name == "Show")
+      {
+        FString CameraToIgnore = Jason->GetStringField("camera");
+        USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
+        auto* Object = this->GetObjectFromJSON(Jason);
+        if (Object->IsA<AActor>())
+        {
+          // try get primitive component
+          auto* ActorObject = Cast<AActor>(Object);
+          SceneCapture->ShowOnlyActorComponents(ActorObject, true);
+        }
+        else
+        {
+          // try get primitive component
+          auto* PrimitiveObject = Cast<UPrimitiveComponent>(Object);
+          if (PrimitiveObject)
+          {
+            SceneCapture->ShowOnlyComponent(PrimitiveObject);
+          }
+        }
+      }
+      else if (Name == "HideAll")
+      {
+        FString CameraToIgnore = Jason->GetStringField("camera");
+        bool Value = Jason->GetBoolField("value");
+        USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
+        SceneCapture->PrimitiveRenderMode = Value ? ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList : ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+      }
+      else if (Name == "RawData")
+      {
+        this->FrameCaptureTime = GetDoubleFieldOr(Jason, "framecapturetime", 10.0);
+        this->FrameCaptureCounter = this->FrameCaptureTime;
+      }
+      else if (Name == "navigate")
+      {
+        AutoNavigate = false;
+        NextLocation = FVector(Jason->GetNumberField("x"), Jason->GetNumberField("y"), Jason->GetNumberField("z"));
+      }
+    }
+    else if (type == "info")
+    {
+      if (Jason->HasField("frametime"))
+      {
+        const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
+        SendResponse(Response, unixtime_start);
+      }
+      else if (Jason->HasField("memory"))
+      {
+        const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
+        SendResponse(Response, unixtime_start);
+      }
+      else if (Jason->HasField("fps"))
+      {
+        const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
+        SendResponse(Response, unixtime_start);
+      }
+      else if (Jason->HasField("object"))
+      {
+        FString RequestedObjectName = Jason->GetStringField("object");
+        TArray<AActor*> FoundActors;
+      }
+      else if (Jason->HasField("DataChannelSize"))
+      {
+        int DataChannelSize = Jason->GetIntegerField("DataChannelSize");
+        this->DataChannelMaxSize = DataChannelSize;
+      }
+    }
+    else if (type == "console")
+    {
+      if (Jason->HasField("command"))
+      {
+        FString Command = Jason->GetStringField("command");
+        UE_LOG(LogTemp, Warning, TEXT("Console command %s"), *Command);
+        auto* Controller = GetWorld()->GetFirstPlayerController();
+        if (Controller)
+        {
+          Controller->ConsoleCommand(Command);
+        }
+      }
+    }
+    else if (type == "settings")
+    {
+      // check for settings subobject and put it into member
+      ApplyFromJSON(Jason);
+      if (this->DataChannelMaxSize < 1024)
+      {
+        this->DataChannelMaxSize = 1024;
+      }
+    }
+    else if (type == "append")
+    {
+      if (Jason->HasField("object"))
+      {
+        UE_LOG(LogTemp, Warning, TEXT("Request to append geometry to object"));
+        AppendToMesh(Jason);
+      }
+    }
+    else if (type == "spawn")
+    {
+      if (Jason->HasField("object") && Jason->GetStringField("object") == "ProceduralMeshComponent")
+      {
+        UE_LOG(LogTemp, Warning, TEXT("Spawn request for ProceduralMeshComponent"));
+        int32 section_index = 0;
+        if (Jason->HasField("section"))
+        {
+          section_index = Jason->GetIntegerField("section");
+        }
+        auto name = this->WorldSpawner->SpawnObject(Jason);
+        UProceduralMeshComponent* Mesh = Cast<UProceduralMeshComponent>(WorldSpawner->GetHeldComponent());
+        TArray<FColor> Colors;
+        if (Scalars.Num() == Points.Num())
+        {
+          // we have scalars, so we need to convert them to colors
+          // just as an example, we use a bluered
+          // we can use the same color map for all scalars
+          // but we need to know the range of the scalars
+          float min = Scalars[0];
+          float max = Scalars[0];
+          for (auto scalar : Scalars)
+          {
+            if (scalar < min)
+            {
+              min = scalar;
+            }
+            if (scalar > max)
+            {
+              max = scalar;
+            }
+          }
+          for (auto scalar : Scalars)
+          {
+            float t = (scalar - min) / (max - min);
+            FLinearColor color = FLinearColor::LerpUsingHSV(FLinearColor(1, 0, 0), FLinearColor(0, 0, 1), t);
+            Colors.Add(color.ToFColor(false));
+          }
+        }
+        Mesh->CreateMeshSection(section_index, Points, Triangles, Normals, UVs, Colors, Tangents, true);
+      }
+      else if (this->WorldSpawner)
+      {
+        auto name = this->WorldSpawner->SpawnObject(Jason);
+        SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name), unixtime_start);
+      }
+      else
+      {
+        UE_LOG(LogTemp, Warning, TEXT("No world spawner available"));
+        SendError("No world spawner available");
+      }
+    }
+    else if (type == "texture")
+    {
+
+      FString TexData = GetStringFieldOr(Jason, "data", "");
+      // check if the transmission is direct
+      if (!TexData.IsEmpty())
+      {
+        auto size = FBase64::GetDecodedDataSize(TexData);
+        ReceptionBuffer = new uint8[size];
+        FBase64::Decode(*TexData, size, ReceptionBuffer);
+        ApplyOrStoreTexture(Jason);
+      }
+    }
+    else if (type == "buffer")
+    {
+      FString name;
+      if (Jason->HasField("start") && Jason->HasField("size") && Jason->HasField("format"))
+      {
+
+        name = Jason->GetStringField("start");
+        auto Format = Jason->GetStringField("format");
+        auto size = Jason->GetIntegerField("size");
+        ReceptionBufferSize = size;
+        ReceptionFormat = Format;
+        ReceptionName = name;
+        ReceptionBufferOffset = 0;
+        // if the format is binary, we do not need to do anything
+        // if the format is base64, we need to decode the data and allocate a buffer
+        if (Format == "base64")
+        {
+          ReceptionBuffer = new uint8[size];
+        }
+        else if (ReceptionName == "points")
+        {
+          Points.SetNum(size / sizeof(FVector));
+          ReceptionBuffer = reinterpret_cast<uint8*>(Points.GetData());
+        }
+        else if (ReceptionName == "normals")
+        {
+          Points.SetNum(size / sizeof(FVector));
+          ReceptionBuffer = reinterpret_cast<uint8*>(Normals.GetData());
+        }
+        else if (ReceptionName == "triangles")
+        {
+          Triangles.SetNum(size / sizeof(int32));
+          ReceptionBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
+        }
+        else if (ReceptionName == "uvs")
+        {
+          UVs.SetNum(size / sizeof(FVector2D));
+          ReceptionBuffer = reinterpret_cast<uint8*>(UVs.GetData());
+        }
+        else if (ReceptionName == "texture" || ReceptionName == "custom")
+        {
+          ReceptionBuffer = new uint8[size];
+        }
+        else
+        {
+          UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
+          SendError("Unknown buffer name");
+          return;
+        }
+        SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name), unixtime_start);
+      }
+      else if (Jason->HasField("stop"))
+      {
+        // compute the size of the output buffer
+        auto OutputSize = FBase64::GetDecodedDataSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
+
+        uint8* OutputBuffer = nullptr;
+        // if we got a base64 buffer, we need to decode it
+        if (ReceptionFormat == "base64")
+        {
+          if (ReceptionName == "points")
+          {
+            Points.SetNum(OutputSize / sizeof(FVector));
+            OutputBuffer = reinterpret_cast<uint8*>(Points.GetData());
+          }
+          else if (ReceptionName == "normals")
+          {
+            Normals.SetNum(OutputSize / sizeof(FVector));
+            OutputBuffer = reinterpret_cast<uint8*>(Normals.GetData());
+          }
+          else if (ReceptionName == "triangles")
+          {
+            Triangles.SetNum(OutputSize / sizeof(int32));
+            OutputBuffer = reinterpret_cast<uint8*>(Triangles.GetData());
+          }
+          else if (ReceptionName == "uvs")
+          {
+            UVs.SetNum(OutputSize / sizeof(FVector2D));
+            OutputBuffer = reinterpret_cast<uint8*>(UVs.GetData());
+          }
+          else if (ReceptionName == "tangents")
+          {
+            // here we need to allocate a buffer for the tangents with FVector
+            // This is because we do not transmit the fourth component of the tangent
+            Tangents.SetNum(OutputSize / sizeof(FVector));
+            // parse the vectors into new FProcMeshTangents and copy them into the array
+            float* TangentData = reinterpret_cast<float*>(ReceptionBuffer);
+            for (int i = 0; i < OutputSize / sizeof(FVector); i++)
+            {
+              Tangents[i].TangentX = FVector(TangentData[i * 3], TangentData[i * 3 + 1], TangentData[i * 3 + 2]);
+              Tangents[i].bFlipTangentY = false;
+            }
+          }
+          else if (ReceptionName == "texture" || ReceptionName == "custom")
+          {
+
+            OutputBuffer = new uint8[OutputSize];
+          }
+          else
+          {
+            UE_LOG(LogTemp, Warning, TEXT("Unknown buffer name %s"), *ReceptionName);
+            SendError("Unknown buffer name");
+            return;
+          }
+
+          // use built-in unreal functions as long as the in-place decoding does not work
+          // Create FString from Reception Buffer
+
+          int32_t EndBuffer = 0;
+          // find the end of the base64 string by searching for the first occurence of a non-base64 character
+          for (; EndBuffer < ReceptionBufferSize; EndBuffer++)
+          {
+            // manually check the character against the base64 alphabet
+            // break when we find the first character that is part of the base64 alphabet
+            // this is because we start from the end of the string
+            const char c = reinterpret_cast<const char*>(ReceptionBuffer)[ReceptionBufferSize - EndBuffer - 1];
+            if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+              || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r'))
+            {
+              break;
+            }
+          }
+
+          // Decode the Base64 String
+          // we need to remove the last 6 characters, because they are not part of the base64 string
+          // this is because the base64 string is padded with 6 characters
+          if (!FBase64::Decode(reinterpret_cast<const ANSICHAR*>(ReceptionBuffer), ReceptionBufferSize - EndBuffer, OutputBuffer))
+          {
+            UE_LOG(LogTemp, Warning, TEXT("Could not decode base64 string"));
+            // for debug purposes, we write the first 20 letters of the string onto log
+            //UE_LOG(LogTemp, Warning, TEXT("First 20 letters of string: %s"), *Base64String.Left(20));
+            //UE_LOG(LogTemp, Warning, TEXT("Last 20 letters of string: %s"), *Base64String.Right(20));
+            SendError("Could not decode base64 string");
+            return;
+          }
+          delete[] ReceptionBuffer;
+          ReceptionBuffer = OutputBuffer;
+          name = Jason->GetStringField("stop");
+          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize), unixtime_start);
+          if (ReceptionName == "texture")
+          {
+            ApplyOrStoreTexture(Jason);
+          }
+          else
+          {
+            ReceptionBufferSize = OutputSize;
+          }
+          //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name),unixtime_start);
+        }
+      }
+      else
+      {
+        SendError("buffer request needs start or stop field");
+        return;
+      }
+    }
+    else if (type == "receive")
+    {
+      // in-thread buffer progression message
+      int progress = Jason->GetIntegerField("progress");
+      if (progress == -1)
+      {
+        FTextureRenderTargetResource* Source = nullptr;
+        ReceptionName = GetStringFieldOr(Jason, "camera", "scene");
+        if (ReceptionName == "scene")
+        {
+          Source = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
+        }
+        else
+        {
+          Source = InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
+        }
+        TArray<FColor> CamData;
+        FReadSurfaceDataFlags ReadPixelFlags(ERangeCompressionMode::RCM_MinMax);
+        ReadPixelFlags.SetLinearToGamma(true);
+        if (!Source->ReadPixels(CamData, ReadPixelFlags))
+        {
+          SendError("Could not read pixels from camera");
+          return;
+        }
+        ReceptionFormat = FBase64::Encode(reinterpret_cast<uint8*>(CamData.GetData()), CamData.Num() * sizeof(FColor));
+        if (this->IsInEditor())
+        {
+          auto OutputString = ReceptionFormat;
+          // split every 100th character into a new line
+          for (int i = 100; i < OutputString.Len(); i += 100)
+          {
+            OutputString.InsertAt(i, '\n');
+          }
+          auto unixtime = FDateTime::Now().ToUnixTimestamp();
+          auto FileName = FPaths::ProjectDir() + "/Synavisue" + FString::FromInt(unixtime) + ".json";
+          FFileHelper::SaveStringToFile(OutputString, *FileName);
+        }
+        UE_LOG(LogTemp, Warning, TEXT("Read %d pixels from camera amounting to sizes of %d->%d"), CamData.Num(), CamData.Num() * sizeof(FColor), ReceptionFormat.Len());
+        ReceptionBufferSize = 1;
+        ReceptionBufferOffset = 0;
+        auto BaseLength = ReceptionFormat.Len();
+        while (30 * ReceptionBufferSize + (BaseLength / ReceptionBufferSize) > DataChannelMaxSize)
+        {
+          ReceptionBufferSize++;
+        }
+        LastProgress = 0;
+      }
+      else if (progress == -2)
+      {
+        auto missing_chunk = Jason->GetIntegerField("chunk");
+        UE_LOG(LogNet, Warning, TEXT("Received request for missing chunk %d"), missing_chunk);
+        if (missing_chunk < 0 || missing_chunk >= ReceptionBufferSize)
+        {
+          SendError("invalid chunk number");
+          return;
+        }
+        else
+        {
+          FString Response = TEXT("{\"type\":\"receive\",\"data\":\"");
+          auto ChunkSize = ReceptionFormat.Len() / ReceptionBufferSize;
+          const auto Lower = ChunkSize * missing_chunk;
+          auto Upper = FGenericPlatformMath::Min(ChunkSize * (missing_chunk + 1), (uint64_t)ReceptionFormat.Len());
+          if ((ReceptionFormat.Len() - Upper) < ReceptionBufferSize)
+          {
+            Upper = ReceptionFormat.Len();
+          }
+          Response += ReceptionFormat.Mid(Lower, Upper - Lower + 1);
+          Response += TEXT("\", \"chunk\":\"");
+          Response += FString::FromInt(missing_chunk);
+          Response += TEXT("/");
+          Response += FString::FromInt(ReceptionBufferSize);
+          Response += TEXT("\"}");
+          SendResponse(Response);
+        }
+      }
+      else
+      {
+        LastProgress = progress;
+      }
+    }
+    else if (type == "frame")
+    {
+      if (this->DataChannelMaxSize < 0)
+      {
+        SendError("frame was requested but data channel size is not set");
+        return;
+      }
+
+      FString res = GetStringFieldOr(Jason, "resolution", "base");
+      FString ImageTarget = GetStringFieldOr(Jason, "camera", "scene");
+
+      if (res == "base")
+      {
+        SendRawFrame(Jason);
+      }
+      else if (res == "high")
+      {
+        int factor = GetIntFieldOr(Jason, "factor", 1);
+        // this is delegated to HighResScreenshot
+        // we need to set the resolution of the screenshot
+        // this is done by setting the console variable
+        auto* controller = GetWorld()->GetFirstPlayerController();
+        if (controller)
+        {
+          controller->ConsoleCommand(FString::Printf(TEXT("HighResShot %d"), factor));
+        }
+      }
+    }
+    else if (type == "apply")
+    {
+      // this is mostly due to a previous texture buffer transmission
+      // we need to apply the texture to the material
+      ApplyOrStoreTexture(Jason);
+      delete[] ReceptionBuffer;
+      ReceptionBuffer = nullptr;
+      ReceptionBufferSize = 0;
+      ReceptionName = "";
+      ReceptionFormat = "";
+      ReceptionBufferOffset = 0;
+    }
+    else if (type == "schedule")
+    {
+      // this is a request to schedule a command
+      // a subobject must exist with the json prompt
+      auto Prompt = Jason->GetObjectField("prompt");
+      auto time = GetDoubleFieldOr(Jason, "time", 0.0);
+      auto regular = GetDoubleFieldOr(Jason, "repeat", -1.0);
+      // save the task
+      ScheduledTasks.Add({ time, regular, Prompt });
+    }
+    else if (ApplicationProcessInput.IsSet())
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Unknown Type, I am delegating this to custom processing."));
+      ApplicationProcessInput.GetValue()(Jason);
+    }
+  }
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("No type field in JSON"));
+    SendError("No type field in JSON");
   }
 }
 
@@ -1042,8 +1113,6 @@ void ASynavisDrone::ResetSynavisState()
   TransmissionTargets.Empty();
 }
 
-
-
 // Sets default values
 ASynavisDrone::ASynavisDrone()
 {
@@ -1161,6 +1230,11 @@ void ASynavisDrone::LoadFromJSON(FString JasonString)
   TSharedPtr<FJsonObject> Jason = MakeShareable(new FJsonObject());
   TSharedRef<TJsonReader<TCHAR>> Reader = FJsonStringReader::Create(JasonString);
   FJsonSerializer::Deserialize(Reader, Jason);
+  ApplyFromJSON(Jason);
+}
+
+void ASynavisDrone::ApplyFromJSON(TSharedPtr<FJsonObject> Jason)
+{
   for (auto Key : Jason->Values)
   {
     if (Key.Key.StartsWith(TEXT("type")))
@@ -1532,14 +1606,14 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
   {
     struct
     {
-      float fov{};
+      float fov{ 3.f };
       int width{};
       int height{};
-      int id;
-      float pos[3]{ 0.f,0.f,0.f };
-      float rot[3]{ 0.f,0.f,0.f };
-    } data;
-    uint8_t rawdata[sizeof(data)]{};
+      int id{};
+      float pos[3]{ 0.f, 0.f, 0.f };
+      float rot[3]{ 0.f, 0.f, 0.f };
+    } data{};
+    uint8_t rawdata[sizeof(data)];
   } package;
   package.data.fov = CameraTarget->FOVAngle;
   package.data.width = CameraTarget->TextureTarget->GetSurfaceWidth();
@@ -1564,20 +1638,20 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
 
   FString RenderTargetString = FBase64::Encode(reinterpret_cast<uint8*>(CData.GetData()), CData.Num() * sizeof(FColor));
 
-  FString Base = TEXT("{\"type\":\"frame\",\"meta\":\"") + packageString + TEXT("\",\"chunk\":\"");
+  FString Base = TEXT("{\"t\":\"f\",\"m\":\"") + packageString + TEXT("\",\"c\":\"");
   FString End = TEXT("\"}");
   int numChunks = 1;
   // lambda for the length of an int in digits
   const auto intlen = [](int i) -> int
-  {
-    int len = 0;
-    while (i > 0)
     {
-      i /= 10;
-      len++;
-    }
-    return len;
-  };
+      int len = 0;
+      while (i > 0)
+      {
+        i /= 10;
+        len++;
+      }
+      return len;
+    };
   while (3 + (2 * intlen(numChunks)) + Base.Len() * numChunks + End.Len() * numChunks + RenderTargetString.Len() / numChunks > DataChannelMaxSize)
   {
     numChunks++;
@@ -1593,7 +1667,7 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
       {
         int start = i * RenderTargetString.Len() / numChunks;
         int end = (i + 1) * RenderTargetString.Len() / numChunks;
-        FString Chunk = Base + FString::FromInt(i) + TEXT("/") + FString::FromInt(numChunks) + TEXT("\",\"data\":\"") + RenderTargetString.Mid(start, end - start) + End;
+        FString Chunk = Base + FString::FromInt(i) + TEXT("/") + FString::FromInt(numChunks) + TEXT("\",\"d\":\"") + RenderTargetString.Mid(start, end - start) + End;
         SendResponse(Chunk, -1);
         // we need to wait a bit, otherwise the chunks might jam
         FPlatformProcess::Sleep(Delay);
@@ -1649,7 +1723,7 @@ void ASynavisDrone::BeginPlay()
 
   InfoCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
   SceneCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
-  
+
   SpaceOrigin = Flyspace->GetComponentLocation();
   SpaceExtend = Flyspace->GetScaledBoxExtent();
 
@@ -2026,4 +2100,22 @@ void ASynavisDrone::Tick(float DeltaTime)
     }
     SendResponse(Response);
   }
+
+  for (auto& Task : ScheduledTasks)
+  {
+    Task.Get<0>() -= DeltaTime;
+    if (Task.Get<0>() <= 0.0)
+    {
+      JsonCommand(Task.Get<2>(), -1);
+      if (Task.Get<1>() > 0)
+      {
+        Task.Get<0>() = Task.Get<1>();
+      }
+      else
+      {
+        Task.Get<0>() = -1;
+      }
+    }
+  }
+  ScheduledTasks.RemoveAll([](const auto& Task) { return Task.Get<0>() <= 0.0; });
 }
