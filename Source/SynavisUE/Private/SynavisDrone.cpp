@@ -39,6 +39,52 @@ THIRD_PARTY_INCLUDES_START
 #include <limits>
 THIRD_PARTY_INCLUDES_END
 
+inline void ParseBufferFileToGeometry(ASynavisDrone* Drone, FString Filename)
+{
+  // get file handle
+  IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+  // open file in binary read mode
+  IFileHandle* FileHandle = PlatformFile.OpenRead(*Filename);
+  if (!FileHandle)
+  {
+    UE_LOG(LogTemp, Error, TEXT("Could not open file %s"), *Filename);
+    return;
+  }
+  // first 4 byte is the number of points
+  int64 NumPoints = 0;
+  FileHandle->Read(reinterpret_cast<uint8*>(&NumPoints), 4);
+  // second 4 bytes is number of triangles
+  int64 NumTriangles = 0;
+  FileHandle->Read(reinterpret_cast<uint8*>(&NumTriangles), 4);
+  if(FileHandle->Size() - FileHandle->Tell() < NumPoints * 3 * 2 + NumTriangles * 3)
+  {
+    UE_LOG(LogTemp, Error, TEXT("File %s is too small to accomodate Points, Normals, and Triangles"), *Filename);
+    return;
+  }
+  // make point array in drone sufficiently large
+  Drone->Points.SetNum(NumPoints);
+  Drone->Normals.SetNum(NumPoints);
+  Drone->UVs.SetNum(NumPoints);
+  Drone->Scalars.SetNum(NumPoints);
+  Drone->Tangents.SetNum(NumPoints);
+  // make triangle array in drone sufficiently large
+  Drone->Triangles.SetNum(NumTriangles * 3);
+  // Binary Array order is Points, Normals, Triangles, UVs, Tangents, Scalars
+  FileHandle->Read(reinterpret_cast<uint8*>(Drone->Points.GetData()), NumPoints * sizeof(FVector));
+  FileHandle->Read(reinterpret_cast<uint8*>(Drone->Normals.GetData()), NumPoints * sizeof(FVector));
+  FileHandle->Read(reinterpret_cast<uint8*>(Drone->Triangles.GetData()), NumTriangles * 3 * sizeof(int32));
+  FileHandle->Read(reinterpret_cast<uint8*>(Drone->UVs.GetData()), NumPoints * sizeof(FVector2D));
+  if (uint64(FileHandle->Size() - FileHandle->Tell()) > sizeof(FProcMeshTangent) * NumPoints)
+  {
+    FileHandle->Read(reinterpret_cast<uint8*>(Drone->Tangents.GetData()), NumPoints * sizeof(FProcMeshTangent));
+  }
+
+  if (uint64(FileHandle->Size() - FileHandle->Tell()) > sizeof(FProcMeshTangent) * NumPoints)
+  {
+    FileHandle->Read(reinterpret_cast<uint8*>(Drone->Scalars.GetData()), NumPoints * sizeof(float));
+  }
+}
+
 inline float GetColor(const FColor& c, uint32 i)
 {
   switch (i)
@@ -187,6 +233,25 @@ void ASynavisDrone::ParseInput(FString Descriptor)
           }
         }
         SendResponse("{\"type\":\"geometry\",\"name\":\"" + id + "\"}", unixtime_start);
+      }
+      else if (type == "file")
+      {
+        // this is a request to load a file into a geometry
+        // required value filename
+        FString Filename;
+        if (!Jason->HasField("filename"))
+        {
+          SendError("file request needs filename field");
+          return;
+        }
+        else
+        {
+          Filename = Jason->GetStringField("filename");
+        }
+        // if we can extract an object from JSON
+        auto* Object = this->GetObjectFromJSON(Jason);
+        // if not, create new SpawnTarget
+
       }
       else if (type == "parameter")
       {
@@ -1569,15 +1634,15 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
   int numChunks = 1;
   // lambda for the length of an int in digits
   const auto intlen = [](int i) -> int
-  {
-    int len = 0;
-    while (i > 0)
     {
-      i /= 10;
-      len++;
-    }
-    return len;
-  };
+      int len = 0;
+      while (i > 0)
+      {
+        i /= 10;
+        len++;
+      }
+      return len;
+    };
   while (3 + (2 * intlen(numChunks)) + Base.Len() * numChunks + End.Len() * numChunks + RenderTargetString.Len() / numChunks > DataChannelMaxSize)
   {
     numChunks++;
@@ -1649,7 +1714,7 @@ void ASynavisDrone::BeginPlay()
 
   InfoCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
   SceneCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
-  
+
   SpaceOrigin = Flyspace->GetComponentLocation();
   SpaceExtend = Flyspace->GetScaledBoxExtent();
 
