@@ -224,7 +224,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     else if (type == "filegeometry")
     {
       // read file name
-      auto fname = Jason->GetStringField("file");
+      auto fname = Jason->GetStringField("filename");
       // open file in binary mode
       auto& file = FPlatformFileManager::Get().GetPlatformFile();
       if (file.FileExists(*fname))
@@ -235,33 +235,34 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           // first data pointer
           auto* ptr = data.GetData();
           // uint64 info on number of points
-          uint64* num_points = reinterpret_cast<uint64*>(ptr);
+          uint64 num_points = *reinterpret_cast<uint64*>(ptr);
+          uint64 fvector_size = sizeof(FVector);
           ptr += sizeof(uint64);
           // points
-          Points.SetNum(*num_points);
-          FMemory::Memcpy(Points.GetData(), ptr, *num_points * sizeof(FVector));
-          ptr += *num_points * sizeof(FVector);
+          Points.SetNumZeroed(num_points);
+          FMemory::Memcpy(Points.GetData(), ptr, num_points * fvector_size);
+          ptr += num_points * sizeof(FVector);
           // uint64 info on number of indices
-          uint64* num_indices = reinterpret_cast<uint64*>(ptr);
+          uint64 num_indices = *reinterpret_cast<uint64*>(ptr);
           ptr += sizeof(uint64);
           // indices
-          Triangles.SetNum(*num_indices);
-          FMemory::Memcpy(Triangles.GetData(), ptr, *num_indices * sizeof(int32));
-          ptr += *num_indices * sizeof(int32);
+          Triangles.SetNumZeroed(num_indices);
+          FMemory::Memcpy(Triangles.GetData(), ptr, num_indices * sizeof(int32));
+          ptr += num_indices * sizeof(int32);
           // uint64 info on number of normals
-          uint64* num_normals = reinterpret_cast<uint64*>(ptr);
+          uint64 num_normals = *reinterpret_cast<uint64*>(ptr);
           ptr += sizeof(uint64);
           // normals
-          Normals.SetNum(*num_normals);
-          FMemory::Memcpy(Normals.GetData(), ptr, *num_normals * sizeof(FVector));
-          ptr += *num_normals * sizeof(FVector);
+          Normals.SetNumZeroed(num_normals);
+          FMemory::Memcpy(Normals.GetData(), ptr, num_normals * sizeof(FVector));
+          ptr += num_normals * sizeof(FVector);
           // uint64 info on number of uvs
-          uint64* num_uvs = reinterpret_cast<uint64*>(ptr);
+          uint64 num_uvs = *reinterpret_cast<uint64*>(ptr);
           ptr += sizeof(uint64);
           // uvs
-          UVs.SetNum(*num_uvs);
-          FMemory::Memcpy(UVs.GetData(), ptr, *num_uvs * sizeof(FVector2D));
-          ptr += *num_uvs * sizeof(FVector2D);
+          UVs.SetNumZeroed(num_uvs);
+          FMemory::Memcpy(UVs.GetData(), ptr, num_uvs * sizeof(FVector2D));
+          ptr += num_uvs * sizeof(FVector2D);
         }
         // create mesh
         WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, {}, 0.0, 1.0, {}, {});
@@ -648,7 +649,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
             Colors.Add(color.ToFColor(false));
           }
         }
-        Mesh->CreateMeshSection(section_index, Points, Triangles, Normals, UVs, Colors, Tangents, true);
+        Mesh->CreateMeshSection(section_index, Points, Triangles, Normals, UVs, Colors, Tangents, false);
       }
       else if (this->WorldSpawner)
       {
@@ -954,7 +955,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     {
       // this is a request to schedule a command
       // a subobject must exist with the json prompt
-      auto Prompt = Jason->GetObjectField("prompt");
+      auto Prompt = Jason->GetObjectField("command");
       auto time = GetDoubleFieldOr(Jason, "time", 0.0);
       auto regular = GetDoubleFieldOr(Jason, "repeat", -1.0);
       // save the task
@@ -2117,5 +2118,5 @@ void ASynavisDrone::Tick(float DeltaTime)
       }
     }
   }
-  ScheduledTasks.RemoveAll([](const auto& Task) { return Task.Get<0>() <= 0.0; });
+  ScheduledTasks.RemoveAll([](const TTuple<double, double, TSharedPtr<FJsonObject>>& Task) { return Task.Get<0>() <= 0.0; });
 }
