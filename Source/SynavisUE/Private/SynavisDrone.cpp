@@ -265,10 +265,17 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           ptr += num_uvs * sizeof(FVector2D);
         }
         // create mesh
-        WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, {}, 0.0, 1.0, {}, {});
+        if(!Jason->HasField("append") && !Jason->HasField("hold"))
+        {
+          WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, {}, 0.0, 1.0, {}, {});
+        }
       }
       // we consumed the input, delete the file
       file.DeleteFile(*fname);
+      if(unixtime_start > 0)
+      {
+        SendResponse(FString::Printf(TEXT("{\"type\":\"filegeometry\",\"starttime\":%f}"), unixtime_start), unixtime_start);
+      }
     }
     else if (type == "parameter")
     {
