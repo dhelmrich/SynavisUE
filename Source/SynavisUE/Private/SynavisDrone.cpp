@@ -213,11 +213,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       else
       {
         auto* act = WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, Scalars, 0.0, 1.0, UVs, Tangents);
-
-        if (Jason->HasField("random"))
-        {
-          act->SetActorLocation(FVector(FMath::RandRange(-100, 100), FMath::RandRange(-100, 100), FMath::RandRange(0, 100)));
-        }
+        act->SetActorLabel(id);
       }
       SendResponse("{\"type\":\"geometry\",\"name\":\"" + id + "\"}", unixtime_start);
     }

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ProceduralMeshComponent.h"
 #include "GameFramework/Actor.h"
 #include "WorldSpawner.generated.h"
 
@@ -24,6 +25,7 @@ class UProceduralMeshComponent;
 class UMaterial;
 class UMaterialInstanceDynamic;
 struct FStreamableHandle;
+class ASynavisDrone;
 
 UCLASS()
 class SYNAVISUE_API AWorldSpawner : public AActor
@@ -39,8 +41,8 @@ public:
     TArray<float> Scalars, float Min, float Max,
     TArray<FVector2D> TexCoords, TArray<FProcMeshTangent> Tangents);
 
-  UPROPERTY()
-  class UPrimitiveComponent* CropField;
+  UPROPERTY(EditAnywhere, Category = "Field")
+  class UBoxComponent* CropField;
 
   UPROPERTY(BlueprintReadOnly, Category = "Management")
   TArray<FObjectSpawnInstance> SpawnedObjects;
@@ -69,6 +71,12 @@ public:
   UPROPERTY()
   TArray<USceneComponent*> SubComponents;
 
+  UPROPERTY(EditAnywhere)
+    double RandomScaleMin = 0.9;
+
+UPROPERTY(EditAnywhere)
+double RandomScaleMax = 1.1;
+
   // a function that returns a StaticClass from a name
   UClass* GetClassFromName(FString ClassName);
 
@@ -90,6 +98,11 @@ public:
 
   const FJsonObject* GetAssetCacheTemp() const { return AssetCache.Get(); }
 
+    
+
+  UFUNCTION(BlueprintCallable)
+    FTransform GetTransformInCropField();
+
 protected:
   // Called when the game starts or when spawned
   virtual void BeginPlay() override;
@@ -106,8 +119,6 @@ protected:
   AActor* HeldActor;
   UPROPERTY()
   USceneComponent* HeldComponent;
-
-
 
   UPROPERTY()
   UMaterial* DefaultMaterial;

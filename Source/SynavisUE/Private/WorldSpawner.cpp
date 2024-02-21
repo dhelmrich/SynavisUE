@@ -41,6 +41,8 @@
 #include "Components/SkyAtmosphereComponent.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
+// blueprint math library
+#include "Kismet/KismetMathLibrary.h"
 // Audio
 
 
@@ -198,9 +200,13 @@ AActor* AWorldSpawner::SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Nor
   TArray<float> Scalars, float Min, float Max, TArray<FVector2D> TexCoords, TArray<FProcMeshTangent> Tangents)
 {
   ASpawnTarget* Actor = GetWorld()->SpawnActor<ASpawnTarget>();
-  const auto trans = DroneRef->FindGoodTransformBelowDrone();
+  const auto trans = this->GetTransformInCropField();
   Actor->SetActorTransform(trans);
-  Actor->ProcMesh->CreateMeshSection_LinearColor(0, Points, Triangles, Normals, TArray<FVector2D>(), TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
+
+  Actor->ProcMesh->CreateMeshSection_LinearColor(0, Points, Triangles, Normals,
+    (TexCoords.Num() == Points.Num()) ? TexCoords : TArray<FVector2D>(),
+    TArray<FLinearColor>(),
+    (Tangents.Num() == Normals.Num()) ? Tangents : TArray<FProcMeshTangent>(), false);
   this->OnSpawnProcMesh.Broadcast(Actor->ProcMesh);
   return Actor;
 }
@@ -435,6 +441,14 @@ void AWorldSpawner::MessageToClient(FString Message)
   {
     DroneRef->SendResponse(Message);
   }
+}
+
+FTransform AWorldSpawner::GetTransformInCropField()
+{
+  const FVector BoxLocation = UKismetMathLibrary::RandomPointInBoundingBox(CropField->GetComponentLocation(), CropField->GetScaledBoxExtent());
+  const FRotator FlatRotation = FRotator(0, FMath::RandRange(0, 360), 0);
+  const FVector RandomScale = FVector(FMath::RandRange(RandomScaleMin, RandomScaleMax), FMath::RandRange(RandomScaleMin, RandomScaleMax), FMath::RandRange(RandomScaleMin, RandomScaleMax));
+  return FTransform(FlatRotation, BoxLocation, RandomScale);
 }
 
 // Called every frame
