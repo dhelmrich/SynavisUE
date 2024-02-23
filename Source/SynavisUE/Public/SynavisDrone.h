@@ -107,7 +107,7 @@ public:
     FBlueprintSignallingCallback OnBlueprintSignalling;
 
   UFUNCTION(BlueprintCallable, Category = "Network")
-    void SendResponse(FString Message, double StartTime = -1.0);
+    void SendResponse(FString Message, double StartTime = -1.0, int PlayerID = -1);
 
   UFUNCTION(BlueprintCallable, Category = "Network")
     void SendError(FString Message);

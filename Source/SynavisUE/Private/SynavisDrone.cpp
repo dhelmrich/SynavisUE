@@ -181,7 +181,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
   if (Jason->HasField("type"))
   {
     auto type = Jason->GetStringField("type");
-
+    int pid = GetIntFieldOr(Jason, "pid", -1);
     if (LogResponses)
       UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
     if (type == "geometry")
@@ -213,9 +213,9 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       else
       {
         auto* act = WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, Scalars, 0.0, 1.0, UVs, Tangents);
-        act->SetActorLabel(id);
+        id = act->GetName();
       }
-      SendResponse("{\"type\":\"geometry\",\"name\":\"" + id + "\"}", unixtime_start);
+      SendResponse("{\"type\":\"geometry\",\"name\":\"" + id + "\"}", unixtime_start, pid);
     }
     else if (type == "filegeometry")
     {
@@ -270,14 +270,14 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       file.DeleteFile(*fname);
       if(unixtime_start > 0)
       {
-        SendResponse(FString::Printf(TEXT("{\"type\":\"filegeometry\",\"starttime\":%f}"), unixtime_start), unixtime_start);
+        SendResponse(FString::Printf(TEXT("{\"type\":\"filegeometry\",\"starttime\":%f}"), unixtime_start), unixtime_start, pid);
       }
     }
     else if (type == "parameter")
     {
       auto* Target = this->GetObjectFromJSON(Jason);
       ApplyJSONToObject(Target, Jason.Get());
-      SendResponse("{\"type\":\"parameter\",\"name\":\"" + Target->GetName() + "\"}", unixtime_start);
+      SendResponse("{\"type\":\"parameter\",\"name\":\"" + Target->GetName() + "\"}", unixtime_start, pid);
     }
     else if (type == "query")
     {
@@ -302,7 +302,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
                   message += TEXT(",");
               }
               message += "]}";
-              this->SendResponse(message, unixtime_start);
+              this->SendResponse(message, unixtime_start, pid);
             }
             else
             {
@@ -316,7 +316,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
                 TSharedRef<TJsonWriter<TCHAR>> Writer = TJsonWriterFactory<TCHAR>::Create(&message);
                 FJsonSerializer::Serialize(asset_json.ToSharedRef(), Writer);
                 message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"spawn\",\"data\":%s}"), *message);
-                this->SendResponse(message, unixtime_start);
+                this->SendResponse(message, unixtime_start, pid);
               }
             }
           }
@@ -335,7 +335,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
               message += TEXT(",");
           }
           message += "]}";
-          this->SendResponse(message, unixtime_start);
+          this->SendResponse(message, unixtime_start, pid);
         }
       }
       else if (Jason->HasField("property"))
@@ -347,7 +347,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           FString Property = Jason->GetStringField("property");
           FString JsonData = GetJSONFromObjectProperty(Target, Property);
           FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
-          this->SendResponse(message, unixtime_start);
+          this->SendResponse(message, unixtime_start, pid);
         }
         else
         {
@@ -363,7 +363,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           FString Name = Target->GetName();
           FString JsonData = ListObjectPropertiesAsJSON(Target);
           FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
-          this->SendResponse(message, unixtime_start);
+          this->SendResponse(message, unixtime_start, pid);
         }
         else
         {
@@ -560,17 +560,17 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       if (Jason->HasField("frametime"))
       {
         const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
-        SendResponse(Response, unixtime_start);
+        SendResponse(Response, unixtime_start, pid);
       }
       else if (Jason->HasField("memory"))
       {
         const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
-        SendResponse(Response, unixtime_start);
+        SendResponse(Response, unixtime_start, pid);
       }
       else if (Jason->HasField("fps"))
       {
         const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
-        SendResponse(Response, unixtime_start);
+        SendResponse(Response, unixtime_start, pid);
       }
       else if (Jason->HasField("object"))
       {
@@ -657,7 +657,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       else if (this->WorldSpawner)
       {
         auto name = this->WorldSpawner->SpawnObject(Jason);
-        SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name), unixtime_start);
+        SendResponse(FString::Printf(TEXT("{\"type\":\"spawn\",\"name\":\"%s\"}"), *name), unixtime_start, pid);
       }
       else
       {
@@ -727,7 +727,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           SendError("Unknown buffer name");
           return;
         }
-        SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name), unixtime_start);
+        SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name), unixtime_start, pid);
       }
       else if (Jason->HasField("stop"))
       {
@@ -816,7 +816,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           delete[] ReceptionBuffer;
           ReceptionBuffer = OutputBuffer;
           name = Jason->GetStringField("stop");
-          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize), unixtime_start);
+          SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize), unixtime_start, pid);
           if (ReceptionName == "texture")
           {
             ApplyOrStoreTexture(Jason);
@@ -825,7 +825,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           {
             ReceptionBufferSize = OutputSize;
           }
-          //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name),unixtime_start);
+          //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name),unixtime_start, pid);
         }
       }
       else
@@ -906,7 +906,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           Response += TEXT("/");
           Response += FString::FromInt(ReceptionBufferSize);
           Response += TEXT("\"}");
-          SendResponse(Response);
+          SendResponse(Response, unixtime_start, pid);
         }
       }
       else
@@ -1087,7 +1087,7 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
 
 }
 
-void ASynavisDrone::SendResponse(FString Descriptor, double StartTime)
+void ASynavisDrone::SendResponse(FString Descriptor, double StartTime, int PlayerID)
 {
   if (StartTime > 0)
   {
@@ -1098,6 +1098,12 @@ void ASynavisDrone::SendResponse(FString Descriptor, double StartTime)
     // add the time difference to the descriptor by removing the rbrace at the end and adding the time difference
     Descriptor.RemoveAt(Descriptor.Len() - 1);
     Descriptor.Append(FString::Printf(TEXT(", \"processed_time\":%d}"), TimeDifference));
+  }
+  if(PlayerID >= 0)
+  {
+	// add the player id to the descriptor by removing the rbrace at the and and adding the player id
+    Descriptor.RemoveAt(Descriptor.Len() - 1);
+    Descriptor.Append(FString::Printf(TEXT(", \"player_id\":%d}"), PlayerID));
   }
   FString Response(reinterpret_cast<TCHAR*>(TCHAR_TO_UTF8(*Descriptor)));
   // logging the first 20 characters of the response
@@ -1663,7 +1669,7 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
   // make a task in the game thread to send the chunks
   FGraphEventRef Task = FFunctionGraphTask::CreateAndDispatchWhenReady(
     [RenderTargetString = std::move(RenderTargetString), Base = std::move(Base), End = std::move(End),
-    SendResponse = std::bind(&ASynavisDrone::SendResponse, this, std::placeholders::_1, -1),
+    SendResponse = std::bind(&ASynavisDrone::SendResponse, this, std::placeholders::_1, -1.0, -1),
     Delay = this->DataChannelBufferDelay, numChunks
     ]()
     {
@@ -1672,7 +1678,7 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
         int start = i * RenderTargetString.Len() / numChunks;
         int end = (i + 1) * RenderTargetString.Len() / numChunks;
         FString Chunk = Base + FString::FromInt(i) + TEXT("/") + FString::FromInt(numChunks) + TEXT("\",\"d\":\"") + RenderTargetString.Mid(start, end - start) + End;
-        SendResponse(Chunk, -1);
+        SendResponse(Chunk);
         // we need to wait a bit, otherwise the chunks might jam
         FPlatformProcess::Sleep(Delay);
       }
