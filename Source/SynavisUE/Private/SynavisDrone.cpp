@@ -263,7 +263,8 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         // create mesh
         if(!Jason->HasField("append") && !Jason->HasField("hold"))
         {
-          WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, {}, 0.0, 1.0, {}, {});
+          auto mesh = WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, {}, 0.0, 1.0, UVs, {});
+          ApplyJSONToObject(mesh, Jason.Get());
         }
       }
       // we consumed the input, delete the file

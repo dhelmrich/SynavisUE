@@ -249,6 +249,9 @@ public:
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
     int MaxFPS = -1.f;
 
+  UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "View")
+    FVector NextLocation;
+
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Network")
     int RawDataResolution = 256;
 
@@ -315,7 +318,6 @@ protected:
 
   TMap<int, TPair<UTextureRenderTarget2D*, UTextureRenderTarget2D*>> RenderTargets;
   int LastTransmissionID = 100;
-  FVector NextLocation;
   FVector Velocity;
   FVector SpaceOrigin;
   FVector SpaceExtend;
