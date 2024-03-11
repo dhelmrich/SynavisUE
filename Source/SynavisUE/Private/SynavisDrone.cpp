@@ -678,6 +678,10 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         FBase64::Decode(*TexData, size, ReceptionBuffer);
         ApplyOrStoreTexture(Jason);
       }
+      else
+      {
+        ApplyOrStoreTexture(Jason);
+      }
     }
     else if (type == "buffer")
     {
@@ -818,14 +822,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           ReceptionBuffer = OutputBuffer;
           name = Jason->GetStringField("stop");
           SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize), unixtime_start, pid);
-          if (ReceptionName == "texture")
-          {
-            ApplyOrStoreTexture(Jason);
-          }
-          else
-          {
-            ReceptionBufferSize = OutputSize;
-          }
+          ReceptionBufferSize = OutputSize;
           //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name),unixtime_start, pid);
         }
       }
