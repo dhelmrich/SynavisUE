@@ -45,7 +45,7 @@ public class SynavisUE : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore","DynamicMesh", "PixelStreaming"
-        // ... add private dependencies that you statically link with here ...	
+                // ... add private dependencies that you statically link with here ...	
 			}
 			);
 		

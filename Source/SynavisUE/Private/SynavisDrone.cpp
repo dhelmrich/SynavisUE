@@ -346,6 +346,8 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         {
           FString Name = Target->GetName();
           FString Property = Jason->GetStringField("property");
+          // join Name and Property
+          Name = FString::Printf(TEXT("%s.%s"), *Name, *Property);
           FString JsonData = GetJSONFromObjectProperty(Target, Property);
           FString message = FString::Printf(TEXT("{\"type\":\"query\",\"name\":\"%s\",\"data\":%s}"), *Name, *JsonData);
           this->SendResponse(message, unixtime_start, pid);
