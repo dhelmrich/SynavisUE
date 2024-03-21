@@ -682,6 +682,8 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       }
       else
       {
+        // here we assume that we received a "buffer" in the past
+        // if anything is invalid, this should not do anything
         ApplyOrStoreTexture(Jason);
       }
     }
@@ -1458,7 +1460,8 @@ UObject* ASynavisDrone::GetObjectFromJSON(TSharedPtr<FJsonObject> JSON)
   for (auto* Actor : FoundActors)
   {
     // check if the actor has the same name as the JSON object
-    if (Actor->GetName() == Name)
+    FString ActorName = Actor->GetName();
+    if (ActorName == Name)
     {
       return Actor;
     }
@@ -1907,7 +1910,7 @@ void ASynavisDrone::ApplyOrStoreTexture(TSharedPtr<FJsonObject> Json)
   y = dimension->GetIntegerField("y");
   FString format = GetStringFieldOr(Json, "format", "RGBA8");
   FString target = GetStringFieldOr(Json, "target", "Diffuse");
-  FString name = Json->GetStringField("name");
+  FString name = GetStringFieldOr(Json, "name", "Instance");
   UTexture2D* Texture = WorldSpawner->CreateTexture2DFromData(ReceptionBuffer, this->ReceptionBufferSize, x, y);
   UMaterialInstanceDynamic* MatInst = WorldSpawner->GenerateInstanceFromName(name, false);
   MatInst->SetTextureParameterValue(*target, Texture);

@@ -284,21 +284,28 @@ UTexture2D* AWorldSpawner::CreateTexture2DFromData(uint8* Data, uint64 Size, int
   Texture->AddToRoot();
 
   auto* PlatformData = new FTexturePlatformData();
-  Texture->SetPlatformData(PlatformData);
   PlatformData->SizeX = Width;
   PlatformData->SizeY = Height;
-  PlatformData->PixelFormat = EPixelFormat::PF_B8G8R8A8;
+  PlatformData->PixelFormat = EPixelFormat::PF_R8G8B8A8;
   PlatformData->SetNumSlices(1);
 
   FTexture2DMipMap* Mip = new FTexture2DMipMap();
-  PlatformData->Mips.Add(Mip);
   Mip->SizeX = Width;
   Mip->SizeY = Height;
 
-  void* DataPtr = Mip->BulkData.Lock(LOCK_READ_WRITE);
-  FMemory::Memcpy(DataPtr, Data, Size);
-  Mip->BulkData.Unlock();
+  // put our generated data into the texture
+  Texture->Source.Init(Width, Height, 1, 1, ETextureSourceFormat::TSF_BGRA8, Data);
+  PlatformData->Mips.Add(Mip);
+  Texture->SetPlatformData(PlatformData);
 
+  // if above was successfull, locking the bulk data should result in a valid pointer
+  void* DataPtr = Mip->BulkData.Lock(LOCK_READ_WRITE);
+  uint8* TextureData = (uint8*) Mip->BulkData.Realloc(Size);
+  // copy the data to the texture
+  FMemory::Memcpy(TextureData, Data, Size);
+  // release the data to the texture
+  Mip->BulkData.Unlock();
+  // update the texture resource
   Texture->UpdateResource();
   return Texture;
 }
