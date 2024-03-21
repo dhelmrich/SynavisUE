@@ -1908,7 +1908,6 @@ void ASynavisDrone::ApplyOrStoreTexture(TSharedPtr<FJsonObject> Json)
   TSharedPtr<FJsonObject> dimension = Json->GetObjectField("dimension");
   x = dimension->GetIntegerField("x");
   y = dimension->GetIntegerField("y");
-  FString format = GetStringFieldOr(Json, "format", "RGBA8");
   FString target = GetStringFieldOr(Json, "target", "Diffuse");
   FString name = GetStringFieldOr(Json, "name", "Instance");
   UTexture2D* Texture = WorldSpawner->CreateTexture2DFromData(ReceptionBuffer, this->ReceptionBufferSize, x, y);

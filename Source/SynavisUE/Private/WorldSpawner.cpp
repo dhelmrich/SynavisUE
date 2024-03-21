@@ -183,7 +183,7 @@ AWorldSpawner::AWorldSpawner()
   PrimaryActorTick.bCanEverTick = true;
   CropField = CreateDefaultSubobject<UBoxComponent>(TEXT("Space Bounds"));
 
- 
+
 
   static ConstructorHelpers::FObjectFinder<UMaterial> DefaultMaterialAsset(TEXT("/Script/Engine.Material'/SynavisUE/StandardMaterial.StandardMaterial'"));
   if (DefaultMaterialAsset.Succeeded())
@@ -247,9 +247,9 @@ void AWorldSpawner::ReceiveStreamingCommunicatorRef()
     }
   }
   StreamableHandles.RemoveAll([&HandlesToRelease](const TSharedPtr<FStreamableHandle>& Handle)
-  {
-    return HandlesToRelease.Contains(Handle);
-  });
+    {
+      return HandlesToRelease.Contains(Handle);
+    });
 }
 
 FString AWorldSpawner::PrepareContainerGeometry(TSharedPtr<FJsonObject> Description)
@@ -283,10 +283,14 @@ UTexture2D* AWorldSpawner::CreateTexture2DFromData(uint8* Data, uint64 Size, int
   UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
   Texture->AddToRoot();
 
+  
+  auto PixelFormat = EPixelFormat::PF_B8G8R8A8;
+  auto SourceFormat = ETextureSourceFormat::TSF_BGRA8;
+
   auto* PlatformData = new FTexturePlatformData();
   PlatformData->SizeX = Width;
   PlatformData->SizeY = Height;
-  PlatformData->PixelFormat = EPixelFormat::PF_R8G8B8A8;
+  PlatformData->PixelFormat = PixelFormat;
   PlatformData->SetNumSlices(1);
 
   FTexture2DMipMap* Mip = new FTexture2DMipMap();
@@ -294,13 +298,13 @@ UTexture2D* AWorldSpawner::CreateTexture2DFromData(uint8* Data, uint64 Size, int
   Mip->SizeY = Height;
 
   // put our generated data into the texture
-  Texture->Source.Init(Width, Height, 1, 1, ETextureSourceFormat::TSF_BGRA8, Data);
+  Texture->Source.Init(Width, Height, 1, 1, SourceFormat, Data);
   PlatformData->Mips.Add(Mip);
   Texture->SetPlatformData(PlatformData);
 
   // if above was successfull, locking the bulk data should result in a valid pointer
   void* DataPtr = Mip->BulkData.Lock(LOCK_READ_WRITE);
-  uint8* TextureData = (uint8*) Mip->BulkData.Realloc(Size);
+  uint8* TextureData = (uint8*)Mip->BulkData.Realloc(Size);
   // copy the data to the texture
   FMemory::Memcpy(TextureData, Data, Size);
   // release the data to the texture
@@ -317,7 +321,7 @@ UMaterialInstanceDynamic* AWorldSpawner::GenerateInstanceFromName(FString Instan
   {
     MaterialInstance = MaterialInstances.FindRef(InstanceName);
   }
-  else if(MaterialInstances.Contains(InstanceName) && NewOnly)
+  else if (MaterialInstances.Contains(InstanceName) && NewOnly)
   {
     // create a new name
     FString NewName = InstanceName + FString::FromInt(MaterialInstances.Num());
