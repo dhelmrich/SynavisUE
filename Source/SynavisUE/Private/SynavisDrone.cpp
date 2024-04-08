@@ -125,7 +125,7 @@ void ASynavisDrone::AppendToMesh(TSharedPtr<FJsonObject> Jason)
     procmesh->RegisterComponent();
     procmesh->AttachToComponent(Actor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
   }
-  int section = GetIntFieldOr(Jason, "section", procmesh->GetNumSections());
+  int section = GetIntFieldOr(Jason, TEXT("section"), procmesh->GetNumSections());
   procmesh->CreateMeshSection(section, Points, Triangles, Normals, UVs, {}, Tangents, false);
 }
 
@@ -178,10 +178,10 @@ void ASynavisDrone::ParseInput(FString Descriptor)
 void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_start)
 {
   // check if the message is a geometry message
-  if (Jason->HasField("type"))
+  if (Jason->HasField(TEXT("type")))
   {
-    auto type = Jason->GetStringField("type");
-    int pid = GetIntFieldOr(Jason, "pid", -1);
+    auto type = Jason->GetStringField(TEXT("type"));
+    int pid = GetIntFieldOr(Jason, TEXT("pid"), -1);
     if (LogResponses)
       UE_LOG(LogTemp, Warning, TEXT("Received Message of Type %s"), *type);
     if (type == "geometry")
@@ -202,11 +202,11 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       ParseGeometryFromJson(Jason);
       FString id;
       // check which geometry this message is for
-      if (Jason->HasField("id"))
+      if (Jason->HasField(TEXT("id")))
       {
-        id = Jason->GetStringField("id");
+        id = Jason->GetStringField(TEXT("id"));
       }
-      if (type == "appendbase64")
+      if (type == TEXT("appendbase64"))
       {
         AppendToMesh(Jason);
       }
@@ -217,10 +217,10 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       }
       SendResponse("{\"type\":\"geometry\",\"name\":\"" + id + "\"}", unixtime_start, pid);
     }
-    else if (type == "filegeometry")
+    else if (type == TEXT("filegeometry"))
     {
       // read file name
-      auto fname = Jason->GetStringField("filename");
+      auto fname = Jason->GetStringField(TEXT("filename"));
       // open file in binary mode
       auto& file = FPlatformFileManager::Get().GetPlatformFile();
       if (file.FileExists(*fname))
@@ -261,7 +261,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           ptr += num_uvs * sizeof(FVector2D);
         }
         // create mesh
-        if(!Jason->HasField("append") && !Jason->HasField("hold"))
+        if(!Jason->HasField(TEXT("append")) && !Jason->HasField(TEXT("hold")))
         {
           auto mesh = WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, {}, 0.0, 1.0, UVs, {});
           ApplyJSONToObject(mesh, Jason.Get());
@@ -282,11 +282,11 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     }
     else if (type == "query")
     {
-      if (!Jason->HasField("object"))
+      if (!Jason->HasField(TEXT("object")))
       {
-        if (Jason->HasField("spawn"))
+        if (Jason->HasField(TEXT("spawn")))
         {
-          FString spawn = Jason->GetStringField("spawn");
+          FString spawn = Jason->GetStringField(TEXT("spawn"));
           if (WorldSpawner)
           {
             auto cache = WorldSpawner->GetAssetCacheTemp();
@@ -339,13 +339,13 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           this->SendResponse(message, unixtime_start, pid);
         }
       }
-      else if (Jason->HasField("property"))
+      else if (Jason->HasField(TEXT("property")))
       {
         auto* Target = this->GetObjectFromJSON(Jason);
         if (Target != nullptr)
         {
           FString Name = Target->GetName();
-          FString Property = Jason->GetStringField("property");
+          FString Property = Jason->GetStringField(TEXT("property"));
           // join Name and Property
           Name = FString::Printf(TEXT("%s.%s"), *Name, *Property);
           FString JsonData = GetJSONFromObjectProperty(Target, Property);
@@ -379,15 +379,15 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     {
       // this is a request to track a property
       // we need values "object" and "property"
-      if (!Jason->HasField("object") || !Jason->HasField("property"))
+      if (!Jason->HasField(TEXT("object")) || !Jason->HasField(TEXT("property")))
       {
         SendError("track request needs object and property fields");
         UE_LOG(LogTemp, Error, TEXT("track request needs object and property fields"))
       }
       else
       {
-        FString ObjectName = Jason->GetStringField("object");
-        FString PropertyName = Jason->GetStringField("property");
+        FString ObjectName = Jason->GetStringField(TEXT("object"));
+        FString PropertyName = Jason->GetStringField(TEXT("property"));
         auto Object = this->GetObjectFromJSON(Jason);
         if (!Object)
         {
@@ -431,15 +431,15 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     {
       // this is a request to untrack a property
       // we need values "object" and "property"
-      if (!Jason->HasField("object") || !Jason->HasField("property"))
+      if (!Jason->HasField(TEXT("object")) || !Jason->HasField(TEXT("property")))
       {
         SendError("untrack request needs object and property fields");
         UE_LOG(LogTemp, Error, TEXT("untrack request needs object and property fields"))
       }
       else
       {
-        FString ObjectName = Jason->GetStringField("object");
-        FString PropertyName = Jason->GetStringField("property");
+        FString ObjectName = Jason->GetStringField(TEXT("object"));
+        FString PropertyName = Jason->GetStringField(TEXT("property"));
         auto Object = this->GetObjectFromJSON(Jason);
         if (!Object)
         {
@@ -465,7 +465,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     else if (type == "command")
     {
       // received a command
-      FString Name = Jason->GetStringField("name");
+      FString Name = Jason->GetStringField(TEXT("name"));
       if (Name == "reset")
       {
         // reset the geometry
@@ -481,13 +481,13 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       }
       else if (Name == "cam")
       {
-        FString CameraToSwitchTo = Jason->GetStringField("camera");
+        FString CameraToSwitchTo = Jason->GetStringField(TEXT("camera"));
         if (CameraToSwitchTo == "info")
         {
           UE_LOG(LogActor, Warning, TEXT("Switching to info cam"));
           OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToInfoCam);
         }
-        else if (CameraToSwitchTo == "scene")
+        else if (CameraToSwitchTo == TEXT("scene"))
         {
           UE_LOG(LogActor, Warning, TEXT("Switching to scene cam"));
           OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToSceneCam);
@@ -500,8 +500,8 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       }
       else if (Name == "ignore")
       {
-        FString CameraToIgnore = Jason->GetStringField("camera");
-        USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
+        FString CameraToIgnore = Jason->GetStringField(TEXT("camera"));
+        USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == TEXT("scene")) ? SceneCam : InfoCam;
         auto* Object = this->GetObjectFromJSON(Jason);
         if (Object->IsA<AActor>())
         {
@@ -521,8 +521,8 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       }
       else if (Name == "Show")
       {
-        FString CameraToIgnore = Jason->GetStringField("camera");
-        USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
+        FString CameraToIgnore = Jason->GetStringField(TEXT("camera"));
+        USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == TEXT("scene")) ? SceneCam : InfoCam;
         auto* Object = this->GetObjectFromJSON(Jason);
         if (Object->IsA<AActor>())
         {
@@ -542,55 +542,55 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       }
       else if (Name == "HideAll")
       {
-        FString CameraToIgnore = Jason->GetStringField("camera");
-        bool Value = Jason->GetBoolField("value");
-        USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == "scene") ? SceneCam : InfoCam;
+        FString CameraToIgnore = Jason->GetStringField(TEXT("camera"));
+        bool Value = Jason->GetBoolField(TEXT("value"));
+        USceneCaptureComponent2D* SceneCapture = (CameraToIgnore == TEXT("scene")) ? SceneCam : InfoCam;
         SceneCapture->PrimitiveRenderMode = Value ? ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList : ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
       }
       else if (Name == "RawData")
       {
-        this->FrameCaptureTime = GetDoubleFieldOr(Jason, "framecapturetime", 10.0);
+        this->FrameCaptureTime = GetDoubleFieldOr(Jason, TEXT("framecapturetime"), 10.0);
         this->FrameCaptureCounter = this->FrameCaptureTime;
       }
       else if (Name == "navigate")
       {
         AutoNavigate = false;
-        NextLocation = FVector(Jason->GetNumberField("x"), Jason->GetNumberField("y"), Jason->GetNumberField("z"));
+        NextLocation = FVector(Jason->GetNumberField(TEXT("x")), Jason->GetNumberField(TEXT("y")), Jason->GetNumberField(TEXT("z")));
       }
     }
     else if (type == "info")
     {
-      if (Jason->HasField("frametime"))
+      if (Jason->HasField(TEXT("frametime")))
       {
         const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"frametime\":%f}"), GetWorld()->GetDeltaSeconds());
         SendResponse(Response, unixtime_start, pid);
       }
-      else if (Jason->HasField("memory"))
+      else if (Jason->HasField(TEXT("memory")))
       {
         const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
         SendResponse(Response, unixtime_start, pid);
       }
-      else if (Jason->HasField("fps"))
+      else if (Jason->HasField(TEXT("fps")))
       {
         const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"fps\":%d}"), static_cast<uint32_t>(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles64())));
         SendResponse(Response, unixtime_start, pid);
       }
-      else if (Jason->HasField("object"))
+      else if (Jason->HasField(TEXT("object")))
       {
-        FString RequestedObjectName = Jason->GetStringField("object");
+        FString RequestedObjectName = Jason->GetStringField(TEXT("object"));
         TArray<AActor*> FoundActors;
       }
-      else if (Jason->HasField("DataChannelSize"))
+      else if (Jason->HasField(TEXT("DataChannelSize")))
       {
-        int DataChannelSize = Jason->GetIntegerField("DataChannelSize");
+        int DataChannelSize = Jason->GetIntegerField(TEXT("DataChannelSize"));
         this->DataChannelMaxSize = DataChannelSize;
       }
     }
     else if (type == "console")
     {
-      if (Jason->HasField("command"))
+      if (Jason->HasField(TEXT("command")))
       {
-        FString Command = Jason->GetStringField("command");
+        FString Command = Jason->GetStringField(TEXT("command"));
         UE_LOG(LogTemp, Warning, TEXT("Console command %s"), *Command);
         auto* Controller = GetWorld()->GetFirstPlayerController();
         if (Controller)
@@ -610,7 +610,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     }
     else if (type == "append")
     {
-      if (Jason->HasField("object"))
+      if (Jason->HasField(TEXT("object")))
       {
         UE_LOG(LogTemp, Warning, TEXT("Request to append geometry to object"));
         AppendToMesh(Jason);
@@ -618,13 +618,13 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     }
     else if (type == "spawn")
     {
-      if (Jason->HasField("object") && Jason->GetStringField("object") == "ProceduralMeshComponent")
+      if (Jason->HasField(TEXT("object")) && Jason->GetStringField(TEXT("object")) == "ProceduralMeshComponent")
       {
         UE_LOG(LogTemp, Warning, TEXT("Spawn request for ProceduralMeshComponent"));
         int32 section_index = 0;
-        if (Jason->HasField("section"))
+        if (Jason->HasField(TEXT("section")))
         {
-          section_index = Jason->GetIntegerField("section");
+          section_index = Jason->GetIntegerField(TEXT("section"));
         }
         auto name = this->WorldSpawner->SpawnObject(Jason);
         UProceduralMeshComponent* Mesh = Cast<UProceduralMeshComponent>(WorldSpawner->GetHeldComponent());
@@ -671,7 +671,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     else if (type == "texture")
     {
 
-      FString TexData = GetStringFieldOr(Jason, "data", "");
+      FString TexData = GetStringFieldOr(Jason, TEXT("data"), "");
       // check if the transmission is direct
       if (!TexData.IsEmpty())
       {
@@ -690,12 +690,12 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     else if (type == "buffer")
     {
       FString name;
-      if (Jason->HasField("start") && Jason->HasField("size") && Jason->HasField("format"))
+      if (Jason->HasField(TEXT("start")) && Jason->HasField(TEXT("size")) && Jason->HasField(TEXT("format")))
       {
 
-        name = Jason->GetStringField("start");
-        auto Format = Jason->GetStringField("format");
-        auto size = Jason->GetIntegerField("size");
+        name = Jason->GetStringField(TEXT("start"));
+        auto Format = Jason->GetStringField(TEXT("format"));
+        auto size = Jason->GetIntegerField(TEXT("size"));
         ReceptionBufferSize = size;
         ReceptionFormat = Format;
         ReceptionName = name;
@@ -738,7 +738,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         }
         SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"start\"}"), *name), unixtime_start, pid);
       }
-      else if (Jason->HasField("stop"))
+      else if (Jason->HasField(TEXT("stop")))
       {
         // compute the size of the output buffer
         auto OutputSize = FBase64::GetDecodedDataSize(reinterpret_cast<char*>(ReceptionBuffer), ReceptionBufferSize);
@@ -824,7 +824,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           }
           delete[] ReceptionBuffer;
           ReceptionBuffer = OutputBuffer;
-          name = Jason->GetStringField("stop");
+          name = Jason->GetStringField(TEXT("stop"));
           SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\", \"amount\":%llu}"), *name, ReceptionBufferSize), unixtime_start, pid);
           ReceptionBufferSize = OutputSize;
           //SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"stop\"}"), *name),unixtime_start, pid);
@@ -839,12 +839,12 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     else if (type == "receive")
     {
       // in-thread buffer progression message
-      int progress = Jason->GetIntegerField("progress");
+      int progress = Jason->GetIntegerField(TEXT("progress"));
       if (progress == -1)
       {
         FTextureRenderTargetResource* Source = nullptr;
-        ReceptionName = GetStringFieldOr(Jason, "camera", "scene");
-        if (ReceptionName == "scene")
+        ReceptionName = GetStringFieldOr(Jason, TEXT("camera"), TEXT("scene"));
+        if (ReceptionName == TEXT("scene"))
         {
           Source = SceneCam->TextureTarget->GameThread_GetRenderTargetResource();
         }
@@ -885,7 +885,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       }
       else if (progress == -2)
       {
-        auto missing_chunk = Jason->GetIntegerField("chunk");
+        auto missing_chunk = Jason->GetIntegerField(TEXT("chunk"));
         UE_LOG(LogNet, Warning, TEXT("Received request for missing chunk %d"), missing_chunk);
         if (missing_chunk < 0 || missing_chunk >= ReceptionBufferSize)
         {
@@ -924,16 +924,16 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         return;
       }
 
-      FString res = GetStringFieldOr(Jason, "resolution", "base");
-      FString ImageTarget = GetStringFieldOr(Jason, "camera", "scene");
+      FString res = GetStringFieldOr(Jason, TEXT("resolution"), TEXT("base"));
+      FString ImageTarget = GetStringFieldOr(Jason, TEXT("camera"), TEXT("scene"));
 
-      if (res == "base")
+      if (res == TEXT("base"))
       {
         SendRawFrame(Jason);
       }
-      else if (res == "high")
+      else if (res == TEXT("high"))
       {
-        int factor = GetIntFieldOr(Jason, "factor", 1);
+        int factor = GetIntFieldOr(Jason, TEXT("factor"), 1);
         // this is delegated to HighResScreenshot
         // we need to set the resolution of the screenshot
         // this is done by setting the console variable
@@ -944,7 +944,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         }
       }
     }
-    else if (type == "apply")
+    else if (type == TEXT("apply"))
     {
       // this is mostly due to a previous texture buffer transmission
       // we need to apply the texture to the material
@@ -956,13 +956,13 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       ReceptionFormat = "";
       ReceptionBufferOffset = 0;
     }
-    else if (type == "schedule")
+    else if (type == TEXT("schedule"))
     {
       // this is a request to schedule a command
       // a subobject must exist with the json prompt
-      auto Prompt = Jason->GetObjectField("command");
-      auto time = GetDoubleFieldOr(Jason, "time", 0.0);
-      auto regular = GetDoubleFieldOr(Jason, "repeat", -1.0);
+      auto Prompt = Jason->GetObjectField(TEXT("command"));
+      auto time = GetDoubleFieldOr(Jason, TEXT("time"), 0.0);
+      auto regular = GetDoubleFieldOr(Jason, TEXT("repeat"), -1.0);
       // save the task
       ScheduledTasks.Add({ time, regular, Prompt });
     }
@@ -975,7 +975,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
   else
   {
     UE_LOG(LogTemp, Warning, TEXT("No type field in JSON"));
-    SendError("No type field in JSON");
+    SendError(TEXT("No type field in JSON"));
   }
 }
 
@@ -990,7 +990,7 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
   // fetch the geometry from the world
   if (!WorldSpawner)
   {
-    SendError("No WorldSpawner found");
+    SendError(TEXT("No WorldSpawner found"));
     UE_LOG(LogTemp, Error, TEXT("No WorldSpawner found"));
   }
   // pre-allocate the data destination
@@ -999,7 +999,7 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
   uint64_t MaxSize = 0;
   for (auto Field : Jason->Values)
   {
-    if (Field.Key == "type")
+    if (Field.Key == TEXT("type"))
       continue;
     auto& Value = Field.Value;
     if (Value->Type == EJson::String)
@@ -1012,13 +1012,13 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
   // allocate the destination buffer
   Dest.SetNumUninitialized(MaxSize);
   // get the json property for the points
-  auto points = Jason->GetStringField("points");
+  auto points = Jason->GetStringField(TEXT("points"));
   // decode the base64 string
   Base64.Decode(points, Dest);
   // copy the data into the points array
   Points.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
   FMemory::Memcpy(Points.GetData(), Dest.GetData(), Dest.Num());
-  auto normals = Jason->GetStringField("normals");
+  auto normals = Jason->GetStringField(TEXT("normals"));
   Dest.Reset(MaxSize);
   Base64.Decode(normals, Dest);
   Normals.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
@@ -1028,24 +1028,24 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
     SendError("Normals and Points do not match in size");
     UE_LOG(LogTemp, Error, TEXT("Normals and Points do not match in size"));
   }
-  auto triangles = Jason->GetStringField("triangles");
+  auto triangles = Jason->GetStringField(TEXT("triangles"));
   Dest.Reset(MaxSize);
   Base64.Decode(triangles, Dest);
   Triangles.SetNumUninitialized(Dest.Num() / sizeof(int), true);
   FMemory::Memcpy(Triangles.GetData(), Dest.GetData(), Dest.Num());
   UVs.Reset();
   Dest.Reset(MaxSize);
-  if (Jason->HasField("texcoords"))
+  if (Jason->HasField(TEXT("texcoords")))
   {
-    auto uvs = Jason->GetStringField("texcoords");
+    auto uvs = Jason->GetStringField(TEXT("texcoords"));
     Base64.Decode(uvs, Dest);
     UVs.SetNumUninitialized(Dest.Num() / sizeof(FVector2D), true);
     FMemory::Memcpy(UVs.GetData(), Dest.GetData(), Dest.Num());
   }
-  if (Jason->HasField("scalars"))
+  if (Jason->HasField(TEXT("scalars")))
   {
     // see if there are scalars
-    auto scalars = Jason->GetStringField("scalars");
+    auto scalars = Jason->GetStringField(TEXT("scalars"));
     if (scalars.Len() > 0)
     {
       Dest.Reset();
@@ -1068,7 +1068,7 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
   }
   // see if there are tangents
   FString tangents;
-  if (Jason->TryGetStringField("tangents", tangents) || tangents.Len() > 0)
+  if (Jason->TryGetStringField(TEXT("tangents"), tangents) || tangents.Len() > 0)
   {
     Dest.Reset();
     Base64.Decode(tangents, Dest);
@@ -1265,7 +1265,7 @@ void ASynavisDrone::ApplyFromJSON(TSharedPtr<FJsonObject> Jason)
       FNumericProperty* fprop = CastField<FNumericProperty>(prop);
       if (fprop)
       {
-        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *fprop->GetFullName(), Key.Value->AsNumber());
+        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %f"), *fprop->GetFullName(), Key.Value->AsNumber());
         fprop->SetFloatingPointPropertyValue(fprop->ContainerPtrToValuePtr<void>(this), Key.Value->AsNumber());
       }
     }
@@ -1361,7 +1361,7 @@ FString ASynavisDrone::ListObjectPropertiesAsJSON(UObject* Object)
 void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
 {
   // received a parameter update
-  FString Name = JSON->GetStringField("property");
+  FString Name = JSON->GetStringField(TEXT("property"));
 
   USceneComponent* ComponentIdentity = Cast<USceneComponent>(Object);
   AActor* ActorIdentity = Cast<AActor>(Object);
@@ -1374,34 +1374,34 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
   // Find out whether one of the shortcut properties was updated
   if (ComponentIdentity)
   {
-    if (Name == "position")
+    if (Name == TEXT("position"))
     {
-      if (JSON->HasField("x") && JSON->HasField("y") && JSON->HasField("z"))
+      if (JSON->HasField(TEXT("x")) && JSON->HasField(TEXT("y")) && JSON->HasField(TEXT("z")))
       {
-        ComponentIdentity->SetWorldLocation(FVector(JSON->GetNumberField("x"), JSON->GetNumberField("y"), JSON->GetNumberField("z")));
+        ComponentIdentity->SetWorldLocation(FVector(JSON->GetNumberField(TEXT("x")), JSON->GetNumberField(TEXT("y")), JSON->GetNumberField(TEXT("z"))));
         return;
       }
     }
-    else if (Name == "orientation")
+    else if (Name == TEXT("orientation"))
     {
-      if (JSON->HasField("p") && JSON->HasField("y") && JSON->HasField("r"))
+      if (JSON->HasField(TEXT("p")) && JSON->HasField(TEXT("y")) && JSON->HasField(TEXT("r")))
       {
-        ComponentIdentity->SetWorldRotation(FRotator(JSON->GetNumberField("p"), JSON->GetNumberField("y"), JSON->GetNumberField("r")));
+        ComponentIdentity->SetWorldRotation(FRotator(JSON->GetNumberField(TEXT("p")), JSON->GetNumberField(TEXT("y")), JSON->GetNumberField(TEXT("r"))));
         return;
       }
     }
-    else if (Name == "scale")
+    else if (Name == TEXT("scale"))
     {
-      if (JSON->HasField("x") && JSON->HasField("y") && JSON->HasField("z"))
+      if (JSON->HasField(TEXT("x")) && JSON->HasField(TEXT("y")) && JSON->HasField(TEXT("z")))
       {
-        ComponentIdentity->SetWorldScale3D(FVector(JSON->GetNumberField("x"), JSON->GetNumberField("y"), JSON->GetNumberField("z")));
+        ComponentIdentity->SetWorldScale3D(FVector(JSON->GetNumberField(TEXT("x")), JSON->GetNumberField(TEXT("y")), JSON->GetNumberField(TEXT("z"))));
         return;
       }
     }
-    else if (Name == "visibility")
+    else if (Name == TEXT("visibility"))
     {
-      if (JSON->HasField("value"))
-        ComponentIdentity->SetVisibility(JSON->GetBoolField("value"));
+      if (JSON->HasField(TEXT("value")))
+        ComponentIdentity->SetVisibility(JSON->GetBoolField(TEXT("value")));
       return;
     }
   }
@@ -1410,36 +1410,36 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
     if (Property->IsA(FIntProperty::StaticClass()))
     {
       auto* IntProperty = CastField<FIntProperty>(Property);
-      IntProperty->SetPropertyValue_InContainer(Object, JSON->GetIntegerField("value"));
+      IntProperty->SetPropertyValue_InContainer(Object, JSON->GetIntegerField(TEXT("value")));
     }
     else if (Property->IsA(FFloatProperty::StaticClass()))
     {
       auto* FloatProperty = CastField<FFloatProperty>(Property);
-      FloatProperty->SetPropertyValue_InContainer(Object, JSON->GetNumberField("value"));
+      FloatProperty->SetPropertyValue_InContainer(Object, JSON->GetNumberField(TEXT("value")));
     }
     else if (Property->IsA(FBoolProperty::StaticClass()))
     {
       auto* BoolProperty = CastField<FBoolProperty>(Property);
-      BoolProperty->SetPropertyValue_InContainer(Object, JSON->GetBoolField("value"));
+      BoolProperty->SetPropertyValue_InContainer(Object, JSON->GetBoolField(TEXT("value")));
     }
     else if (Property->IsA(FStrProperty::StaticClass()))
     {
       auto* StringProperty = CastField<FStrProperty>(Property);
-      StringProperty->SetPropertyValue_InContainer(Object, JSON->GetStringField("value"));
+      StringProperty->SetPropertyValue_InContainer(Object, JSON->GetStringField(TEXT("value")));
     }
     // check if property is a vector
     else if (Property->IsA(FStructProperty::StaticClass()))
     {
       auto* StructProperty = CastField<FStructProperty>(Property);
       // check if the struct is a vector via the JSON
-      if (JSON->HasField("x") && JSON->HasField("y") && JSON->HasField("z"))
+      if (JSON->HasField(TEXT("x")) && JSON->HasField(TEXT("y")) && JSON->HasField(TEXT("z")))
       {
         auto* VectorValue = StructProperty->ContainerPtrToValuePtr<FVector>(Object);
         if (VectorValue)
         {
-          VectorValue->X = JSON->GetNumberField("x");
-          VectorValue->Y = JSON->GetNumberField("y");
-          VectorValue->Z = JSON->GetNumberField("z");
+          VectorValue->X = JSON->GetNumberField(TEXT("x"));
+          VectorValue->Y = JSON->GetNumberField(TEXT("y"));
+          VectorValue->Z = JSON->GetNumberField(TEXT("z"));
         }
       }
     }
@@ -1453,7 +1453,7 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
 
 UObject* ASynavisDrone::GetObjectFromJSON(TSharedPtr<FJsonObject> JSON)
 {
-  FString Name = JSON->GetStringField("object");
+  FString Name = JSON->GetStringField(TEXT("object"));
   TArray<AActor*> FoundActors;
   UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), FoundActors);
   // iterate over all actors
@@ -1609,11 +1609,11 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
     return;
   }
 
-  FString ImageTarget = GetStringFieldOr(Jason, "camera", "scene");
+  FString ImageTarget = GetStringFieldOr(Jason, TEXT("camera"), TEXT("scene"));
 
-  auto* rtarget = (ImageTarget == "scene")
+  auto* rtarget = (ImageTarget == TEXT("scene"))
     ? SceneCam->TextureTarget->GameThread_GetRenderTargetResource() : InfoCam->TextureTarget->GameThread_GetRenderTargetResource();
-  auto* CameraTarget = (ImageTarget == "scene") ? SceneCam : InfoCam;
+  auto* CameraTarget = (ImageTarget == TEXT("scene")) ? SceneCam : InfoCam;
 
   union
   {
@@ -1749,7 +1749,7 @@ void ASynavisDrone::BeginPlay()
   CallibratedPostprocess->SetScalarParameterValue(TEXT("BlackDistance"), BlackDistance);
   CallibratedPostprocess->SetScalarParameterValue(TEXT("Mode"), (float)RenderMode);
   CallibratedPostprocess->SetVectorParameterValue(TEXT("BinScale"), (FLinearColor)BinScale);
-  UE_LOG(LogTemp, Warning, TEXT("L:(%d,%d,%d) - E:(%d,%d,%d)"), SpaceOrigin.X, SpaceOrigin.Y, SpaceOrigin.Z, SpaceExtend.X, SpaceExtend.Y, SpaceExtend.Z);
+  UE_LOG(LogTemp, Warning, TEXT("L:(%f,%f,%f) - E:(%f,%f,%f)"), SpaceOrigin.X, SpaceOrigin.Y, SpaceOrigin.Z, SpaceExtend.X, SpaceExtend.Y, SpaceExtend.Z);
   NextLocation = UKismetMathLibrary::RandomPointInBoundingBox(Flyspace->GetComponentLocation(), Flyspace->GetScaledBoxExtent());
   FrameCaptureCounter = FrameCaptureTime;
 
@@ -1905,19 +1905,19 @@ void ASynavisDrone::ApplyOrStoreTexture(TSharedPtr<FJsonObject> Json)
   // require fields: dimension, name, format
   // optional fields: data
   int x, y;
-  TSharedPtr<FJsonObject> dimension = Json->GetObjectField("dimension");
-  x = dimension->GetIntegerField("x");
-  y = dimension->GetIntegerField("y");
-  FString target = GetStringFieldOr(Json, "target", "Diffuse");
-  FString name = GetStringFieldOr(Json, "name", "Instance");
+  TSharedPtr<FJsonObject> dimension = Json->GetObjectField(TEXT("dimension"));
+  x = dimension->GetIntegerField(TEXT("x"));
+  y = dimension->GetIntegerField(TEXT("y"));
+  FString target = GetStringFieldOr(Json, TEXT("target"), "Diffuse");
+  FString name = GetStringFieldOr(Json, TEXT("name"), "Instance");
   UTexture2D* Texture = WorldSpawner->CreateTexture2DFromData(ReceptionBuffer, this->ReceptionBufferSize, x, y);
   UMaterialInstanceDynamic* MatInst = WorldSpawner->GenerateInstanceFromName(name, false);
   MatInst->SetTextureParameterValue(*target, Texture);
 
-  if (Json->HasField("object"))
+  if (Json->HasField(TEXT("object")))
   {
     auto object = GetObjectFromJSON(Json);
-    const int index = GetIntFieldOr(Json, "index", 0);
+    const int index = GetIntFieldOr(Json, TEXT("index"), 0);
     UPrimitiveComponent* MaterialCarryingIdentity;
     if (object->IsA<AActor>())
     {

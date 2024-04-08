@@ -98,7 +98,8 @@ double RandomScaleMax = 1.1;
 
   const FJsonObject* GetAssetCacheTemp() const { return AssetCache.Get(); }
 
-    
+  UFUNCTION(BlueprintCallable)
+    AActor* SampleBoxMesh();
 
   UFUNCTION(BlueprintCallable)
     FTransform GetTransformInCropField();

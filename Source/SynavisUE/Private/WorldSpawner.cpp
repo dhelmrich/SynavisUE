@@ -339,13 +339,13 @@ UMaterialInstanceDynamic* AWorldSpawner::GenerateInstanceFromName(FString Instan
 FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
 {
   FString ObjectName;
-  if (Description->TryGetStringField("object", ObjectName))
+  if (Description->TryGetStringField(TEXT("object"), ObjectName))
   {
     // check if the object is in the asset cache
     if (AssetCache->HasField(ObjectName))
     {
       // load the asset
-      FSoftObjectPath AssetPath = FSoftObjectPath(AssetCache->GetObjectField(ObjectName)->GetStringField("Package") + "/" + ObjectName);
+      FSoftObjectPath AssetPath = FSoftObjectPath(AssetCache->GetObjectField(ObjectName)->GetStringField(TEXT("Package")) + "/" + ObjectName);
       FStreamableManager& Streamable = UAssetManager::GetStreamableManager();
       auto data = Streamable.RequestAsyncLoad(AssetPath, FStreamableDelegate::CreateUObject(this, &AWorldSpawner::ReceiveStreamingCommunicatorRef));
       StreamableHandles.Add(data);
@@ -381,9 +381,9 @@ FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
         UE_LOG(LogTemp, Error, TEXT("Failed to spawn actor of class %s"), *ObjectName);
         return "";
       }
-      if (Description->HasField("parameters"))
+      if (Description->HasField(TEXT("parameters")))
       {
-        auto parameters = Description->GetObjectField("parameters");
+        auto parameters = Description->GetObjectField(TEXT("parameters"));
         this->DroneRef->ApplyJSONToObject(Spawned, parameters.Get());
       }
       return Spawned->GetName();
@@ -427,9 +427,9 @@ void AWorldSpawner::BeginPlay()
   for (auto& Asset : AssetList)
   {
     TSharedPtr<FJsonObject> AssetObject = MakeShareable(new FJsonObject());
-    AssetObject->SetStringField("Package", Asset.PackagePath.ToString());
-    AssetObject->SetStringField("Type", Asset.AssetClassPath.ToString());
-    AssetObject->SetStringField("SearchType", "Mesh");
+    AssetObject->SetStringField(TEXT("Package"), Asset.PackagePath.ToString());
+    AssetObject->SetStringField(TEXT("Type"), Asset.AssetClassPath.ToString());
+    AssetObject->SetStringField(TEXT("SearchType"), TEXT("Mesh"));
     AssetCache->SetObjectField(Asset.AssetName.ToString(), AssetObject);
   }
   Filter.ClassPaths.Empty();
@@ -439,9 +439,9 @@ void AWorldSpawner::BeginPlay()
   for (auto& Asset : MaterialList)
   {
     TSharedPtr<FJsonObject> AssetObject = MakeShareable(new FJsonObject());
-    AssetObject->SetStringField("Package", Asset.PackagePath.ToString());
-    AssetObject->SetStringField("Type", Asset.AssetClassPath.ToString());
-    AssetObject->SetStringField("SearchType", "Material");
+    AssetObject->SetStringField(TEXT("Package"), Asset.PackagePath.ToString());
+    AssetObject->SetStringField(TEXT("Type"), Asset.AssetClassPath.ToString());
+    AssetObject->SetStringField(TEXT("SearchType"), TEXT("Material"));
     AssetCache->SetObjectField(Asset.AssetName.ToString(), AssetObject);
   }
 }
@@ -452,6 +452,61 @@ void AWorldSpawner::MessageToClient(FString Message)
   {
     DroneRef->SendResponse(Message);
   }
+}
+
+AActor *AWorldSpawner::SampleBoxMesh()
+{
+  auto Points = TArray<FVector>{
+    FVector(0, 0, 0),
+    FVector(1, 0, 0),
+    FVector(1, 1, 0),
+    FVector(0, 1, 0),
+    FVector(0, 0, 1),
+    FVector(1, 0, 1),
+    FVector(1, 1, 1),
+    FVector(0, 1, 1)
+  };
+  auto Normals = TArray<FVector>{
+    FVector(0, 0, -1),
+    FVector(0, 0, -1),
+    FVector(0, 0, -1),
+    FVector(0, 0, -1),
+    FVector(0, 0, 1),
+    FVector(0, 0, 1),
+    FVector(0, 0, 1),
+    FVector(0, 0, 1)
+  };
+  auto Triangles = TArray<int>{
+    0, 1, 2,
+    0, 2, 3,
+    4, 6, 5,
+    4, 7, 6,
+    0, 4, 1,
+    1, 4, 5,
+    1, 5, 2,
+    2, 5, 6,
+    2, 6, 3,
+    3, 6, 7,
+    3, 7, 0,
+    0, 7, 4
+  };
+  auto Scalars = TArray<float>{
+    0, 0, 0, 0,
+    1, 1, 1, 1
+  };
+  auto TexCoords = TArray<FVector2D>{
+    FVector2D(0, 0),
+    FVector2D(1, 0),
+    FVector2D(1, 1),
+    FVector2D(0, 1),
+    FVector2D(0, 0),
+    FVector2D(1, 0),
+    FVector2D(1, 1),
+    FVector2D(0, 1)
+  };
+  
+  auto mesh = SpawnProcMesh(Points, Normals, Triangles, Scalars, 0, 1, TexCoords, TArray<FProcMeshTangent>());
+  return mesh;
 }
 
 FTransform AWorldSpawner::GetTransformInCropField()
