@@ -557,6 +557,37 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         AutoNavigate = false;
         NextLocation = FVector(Jason->GetNumberField(TEXT("x")), Jason->GetNumberField(TEXT("y")), Jason->GetNumberField(TEXT("z")));
       }
+      else if (Name == "Trace")
+      {
+        // required fields: start, end
+        FVector startpos, endpos;
+        auto start = Jason->GetObjectField(TEXT("start"));
+        if (Jason->HasField("end"))
+        {
+          auto end = Jason->GetObjectField(TEXT("end"));
+          startpos = FVector(start->GetNumberField(TEXT("x")), start->GetNumberField(TEXT("y")), start->GetNumberField(TEXT("z")));
+          endpos = FVector(end->GetNumberField(TEXT("x")), end->GetNumberField(TEXT("y")), end->GetNumberField(TEXT("z")));
+        }
+        else if (Jason->HasField("direction"))
+        {
+          auto direction = Jason->GetObjectField(TEXT("direction"));
+          startpos = FVector(start->GetNumberField(TEXT("x")), start->GetNumberField(TEXT("y")), start->GetNumberField(TEXT("z")));
+          auto direction_vector = FVector(direction->GetNumberField(TEXT("x")), direction->GetNumberField(TEXT("y")), direction->GetNumberField(TEXT("z")));
+          endpos = startpos + direction_vector;
+        }
+        FHitResult Hit;
+        FCollisionQueryParams TraceParams(FName(TEXT("Trace")), true, this);
+        TraceParams.bTraceComplex = true;
+        TraceParams.bReturnPhysicalMaterial = true;
+        GetWorld()->LineTraceSingleByChannel(Hit, startpos, endpos, ECC_Visibility, TraceParams);
+        if (Hit.bBlockingHit)
+        {
+          auto* Object = Hit.GetActor();
+          FString message = FString::Printf(TEXT("{\"type\":\"Trace\",\"hit\":%s}"), *Object->GetName());
+          SendResponse(message, unixtime_start, pid);
+        }
+
+      }
     }
     else if (type == "info")
     {
@@ -1356,6 +1387,36 @@ FString ASynavisDrone::ListObjectPropertiesAsJSON(UObject* Object)
     OutputString += TEXT(" \"") + name + TEXT("\": \"") + type + TEXT("\"");
   }
   return OutputString + TEXT(" }");
+}
+
+void ASynavisDrone::StoreCameraBuffer(int BufferNumber, FString NameBase)
+{
+  // local blueprint-only function call to save the texture target to a file
+  // this is useful for debugging purposes
+  if (BufferNumber < 0 || BufferNumber >= RenderTargets.Num())
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Buffer number %d out of range"), BufferNumber);
+    return;
+  }
+  auto* Target = (BufferNumber == 0) ? SceneCamTarget : InfoCamTarget;
+  if (!Target)
+  {
+    UE_LOG(LogTemp, Warning, TEXT("No target found for buffer number %d"), BufferNumber);
+    return;
+  }
+  FTextureRenderTargetResource* Source = Target->GameThread_GetRenderTargetResource();
+  TArray<FColor> CamData;
+  FReadSurfaceDataFlags ReadPixelFlags(ERangeCompressionMode::RCM_MinMax);
+  ReadPixelFlags.SetLinearToGamma(true);
+  if (!Source->ReadPixels(CamData, ReadPixelFlags))
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Could not read pixels from camera"));
+    return;
+  }
+  auto filename = FPaths::ProjectDir() + FString(TEXT("synue_")) + NameBase + FString(TEXT("_")) + FString::FromInt(FDateTime::Now().ToUnixTimestamp()) + FString(TEXT(".bmp"));
+  FFileHelper::CreateBitmap(*filename, Target->SizeX, Target->SizeY, CamData.GetData());
+  // log success
+  UE_LOG(LogTemp, Warning, TEXT("Saved camera buffer %d to file"), BufferNumber);
 }
 
 void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)

@@ -130,6 +130,8 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Actor")
     FString ListObjectPropertiesAsJSON(UObject* Object);
 
+  UFUNCTION(BlueprintCallable, Category = "View")
+    void StoreCameraBuffer(int BufferNumber, FString NameBase);
 
   void ApplyJSONToObject(UObject* Object, FJsonObject* JSON);
 
