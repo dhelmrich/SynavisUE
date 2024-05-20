@@ -298,7 +298,9 @@ UTexture2D* AWorldSpawner::CreateTexture2DFromData(uint8* Data, uint64 Size, int
   Mip->SizeY = Height;
 
   // put our generated data into the texture
-  Texture->Source.Init(Width, Height, 1, 1, SourceFormat, Data);
+  //Texture->Source.Init(Width, Height, 1, 1, SourceFormat, Data);
+
+  
   PlatformData->Mips.Add(Mip);
   Texture->SetPlatformData(PlatformData);
 

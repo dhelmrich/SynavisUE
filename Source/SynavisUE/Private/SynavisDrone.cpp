@@ -261,7 +261,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           ptr += num_uvs * sizeof(FVector2D);
         }
         // create mesh
-        if(!Jason->HasField(TEXT("append")) && !Jason->HasField(TEXT("hold")))
+        if (!Jason->HasField(TEXT("append")) && !Jason->HasField(TEXT("hold")))
         {
           auto mesh = WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, {}, 0.0, 1.0, UVs, {});
           ApplyJSONToObject(mesh, Jason.Get());
@@ -269,7 +269,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       }
       // we consumed the input, delete the file
       file.DeleteFile(*fname);
-      if(unixtime_start > 0)
+      if (unixtime_start > 0)
       {
         SendResponse(FString::Printf(TEXT("{\"type\":\"filegeometry\",\"starttime\":%f}"), unixtime_start), unixtime_start, pid);
       }
@@ -557,36 +557,47 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         AutoNavigate = false;
         NextLocation = FVector(Jason->GetNumberField(TEXT("x")), Jason->GetNumberField(TEXT("y")), Jason->GetNumberField(TEXT("z")));
       }
-      else if (Name == "Trace")
+      else if (Name == "trace")
       {
         // required fields: start, end
         FVector startpos, endpos;
-        auto start = Jason->GetObjectField(TEXT("start"));
-        if (Jason->HasField("end"))
+        if (Jason->HasField(TEXT("start")))
+        {
+          auto start = Jason->GetObjectField(TEXT("start"));
+          startpos = FVector(start->GetNumberField(TEXT("x")), start->GetNumberField(TEXT("y")), start->GetNumberField(TEXT("z")));
+        }
+        else
+        {
+          // get the location of the camera
+          startpos = SceneCam->GetComponentLocation();
+        }
+        if (Jason->HasField(TEXT("end")))
         {
           auto end = Jason->GetObjectField(TEXT("end"));
-          startpos = FVector(start->GetNumberField(TEXT("x")), start->GetNumberField(TEXT("y")), start->GetNumberField(TEXT("z")));
           endpos = FVector(end->GetNumberField(TEXT("x")), end->GetNumberField(TEXT("y")), end->GetNumberField(TEXT("z")));
         }
-        else if (Jason->HasField("direction"))
+        else if (Jason->HasField(TEXT("direction")))
         {
           auto direction = Jason->GetObjectField(TEXT("direction"));
-          startpos = FVector(start->GetNumberField(TEXT("x")), start->GetNumberField(TEXT("y")), start->GetNumberField(TEXT("z")));
           auto direction_vector = FVector(direction->GetNumberField(TEXT("x")), direction->GetNumberField(TEXT("y")), direction->GetNumberField(TEXT("z")));
           endpos = startpos + direction_vector;
         }
-        FHitResult Hit;
+        TArray<FHitResult> Hits;
         FCollisionQueryParams TraceParams(FName(TEXT("Trace")), true, this);
         TraceParams.bTraceComplex = true;
         TraceParams.bReturnPhysicalMaterial = true;
-        GetWorld()->LineTraceSingleByChannel(Hit, startpos, endpos, ECC_Visibility, TraceParams);
-        if (Hit.bBlockingHit)
+        // trace all in range
+        GetWorld()->LineTraceMultiByChannel(Hits, startpos, endpos, ECC_Visibility, TraceParams);
+        // create a response by collapsing all hits with distance and name
+        FString message = TEXT("{\"type\":\"trace\",\"data\":[");
+        for (int i = 0; i < Hits.Num(); ++i)
         {
-          auto* Object = Hit.GetActor();
-          FString message = FString::Printf(TEXT("{\"type\":\"Trace\",\"hit\":%s}"), *Object->GetName());
-          SendResponse(message, unixtime_start, pid);
+          message += FString::Printf(TEXT("{\"distance\":%f,\"name\":\"%s\"}"), Hits[i].Distance, *Hits[i].GetActor()->GetName());
+          if (i < Hits.Num() - 1)
+            message += ",";
         }
-
+        message += TEXT("]}");
+        SendResponse(message, unixtime_start, pid);
       }
     }
     else if (type == "info")
@@ -1132,9 +1143,9 @@ void ASynavisDrone::SendResponse(FString Descriptor, double StartTime, int Playe
     Descriptor.RemoveAt(Descriptor.Len() - 1);
     Descriptor.Append(FString::Printf(TEXT(", \"processed_time\":%d}"), TimeDifference));
   }
-  if(PlayerID >= 0)
+  if (PlayerID >= 0)
   {
-	// add the player id to the descriptor by removing the rbrace at the and and adding the player id
+    // add the player id to the descriptor by removing the rbrace at the and and adding the player id
     Descriptor.RemoveAt(Descriptor.Len() - 1);
     Descriptor.Append(FString::Printf(TEXT(", \"player_id\":%d}"), PlayerID));
   }
@@ -1746,8 +1757,8 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
         // we need to wait a bit, otherwise the chunks might jam
         FPlatformProcess::Sleep(Delay);
       }
-    }, TStatId(), nullptr, ENamedThreads::AnyBackgroundHiPriTask);
-}
+      }, TStatId(), nullptr, ENamedThreads::AnyBackgroundHiPriTask);
+    }
 
 const bool ASynavisDrone::IsInEditor() const
 {
