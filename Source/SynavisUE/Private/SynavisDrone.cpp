@@ -145,6 +145,9 @@ void ASynavisDrone::ParseInput(FString Descriptor)
   // remove line breaks
   Message.ReplaceInline(TEXT("\r"), TEXT(""));
   Message.ReplaceInline(TEXT("\n"), TEXT(""));
+  Message.ReplaceInline(TEXT("\\"), TEXT(""));
+  Message.ReplaceInline(TEXT("\"{"), TEXT("{"));
+  Message.ReplaceInline(TEXT("}\""), TEXT("}"));
 
   //UE_LOG(LogTemp, Warning, TEXT("M: %s"), *Message);
   if (Message[0] == '{' && Message[Message.Len() - 1] == '}')
@@ -582,6 +585,11 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           auto direction_vector = FVector(direction->GetNumberField(TEXT("x")), direction->GetNumberField(TEXT("y")), direction->GetNumberField(TEXT("z")));
           endpos = startpos + direction_vector;
         }
+        else
+        {
+          //trace down 1000 units
+          endpos = startpos + FVector(0, 0, -1000);
+        }
         TArray<FHitResult> Hits;
         FCollisionQueryParams TraceParams(FName(TEXT("Trace")), true, this);
         TraceParams.bTraceComplex = true;
@@ -596,7 +604,9 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           if (i < Hits.Num() - 1)
             message += ",";
         }
-        message += TEXT("]}");
+        message += TEXT("],");
+        // add start and end positions
+        message += FString::Printf(TEXT("\"start\":{\"x\":%f,\"y\":%f,\"z\":%f},\"end\":{\"x\":%f,\"y\":%f,\"z\":%f}}"), startpos.X, startpos.Y, startpos.Z, endpos.X, endpos.Y, endpos.Z);
         SendResponse(message, unixtime_start, pid);
       }
     }
@@ -727,6 +737,37 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         // here we assume that we received a "buffer" in the past
         // if anything is invalid, this should not do anything
         ApplyOrStoreTexture(Jason);
+      }
+    }
+    else if (type == "material")
+    {
+      // required: object, material, parameter, dtype
+
+      // extract fields
+      FString ObjectName = Jason->GetStringField(TEXT("object"));
+      FString MaterialSlot = Jason->GetStringField(TEXT("slot"));
+      FString ParameterName = Jason->GetStringField(TEXT("parameter"));
+      FString dtype = Jason->GetStringField(TEXT("dtype"));
+      FString Value = Jason->GetStringField(TEXT("value"));
+
+      auto Object = this->GetObjectFromJSON(Jason);
+      auto Instance = this->WorldSpawner->GenerateInstanceFromName(ObjectName, false);
+
+      if (dtype == TEXT("scalar"))
+      {
+        auto ScalarValue = FCString::Atof(*Value);
+        Instance->SetScalarParameterValue(FName(ParameterName), ScalarValue);
+      }
+      else if (dtype == TEXT("vector"))
+      {
+        auto VectorValue = FVector(FCString::Atof(*Value), FCString::Atof(*Value), FCString::Atof(*Value));
+        Instance->SetVectorParameterValue(FName(ParameterName), VectorValue);
+      }
+      else
+      {
+        UE_LOG(LogTemp, Warning, TEXT("Unknown dtype %s"), *dtype);
+        SendError("Unknown dtype");
+        return;
       }
     }
     else if (type == "buffer")
@@ -1020,6 +1061,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     SendError(TEXT("No type field in JSON"));
   }
 }
+
 
 void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
 {
@@ -1430,6 +1472,19 @@ void ASynavisDrone::StoreCameraBuffer(int BufferNumber, FString NameBase)
   UE_LOG(LogTemp, Warning, TEXT("Saved camera buffer %d to file"), BufferNumber);
 }
 
+FProperty* FindPropertyThatHasName(UObject* Object, FString Name)
+{
+  for (TFieldIterator<FProperty> It(Object->GetClass(), EFieldIteratorFlags::IncludeSuper); It; ++It)
+  {
+    FProperty* Property = *It;
+    if (Property->GetName() == Name)
+    {
+      return Property;
+    }
+  }
+  return nullptr;
+}
+
 void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
 {
   // received a parameter update
@@ -1438,6 +1493,10 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
   USceneComponent* ComponentIdentity = Cast<USceneComponent>(Object);
   AActor* ActorIdentity = Cast<AActor>(Object);
   auto* Property = Object->GetClass()->FindPropertyByName(*Name);
+  if (!Property && VagueMatchProperties)
+  {
+    Property = FindPropertyThatHasName(Object, Name);
+  }
   if (ActorIdentity)
   {
     ComponentIdentity = ActorIdentity->GetRootComponent();
@@ -1533,7 +1592,11 @@ UObject* ASynavisDrone::GetObjectFromJSON(TSharedPtr<FJsonObject> JSON)
   {
     // check if the actor has the same name as the JSON object
     FString ActorName = Actor->GetName();
-    if (ActorName == Name)
+    if (!VagueMatchProperties && ActorName == Name)
+    {
+      return Actor;
+    }
+    else if (VagueMatchProperties && ActorName.Contains(Name))
     {
       return Actor;
     }
@@ -1757,8 +1820,8 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
         // we need to wait a bit, otherwise the chunks might jam
         FPlatformProcess::Sleep(Delay);
       }
-      }, TStatId(), nullptr, ENamedThreads::AnyBackgroundHiPriTask);
-    }
+    }, TStatId(), nullptr, ENamedThreads::AnyBackgroundHiPriTask);
+}
 
 const bool ASynavisDrone::IsInEditor() const
 {
@@ -1768,7 +1831,6 @@ const bool ASynavisDrone::IsInEditor() const
   return false;
 #endif
 }
-
 
 void ASynavisDrone::SetCameraResolution(int Resolution)
 {
@@ -1834,7 +1896,7 @@ void ASynavisDrone::BeginPlay()
     {
       RainActor->GetNiagaraComponent()->Activate(true);
       //RainActor->GetNiagaraComponent()->SetIntParameter(TEXT("SpawnRate"),RainParticlesPerSecond);
-      RainActor->GetNiagaraComponent()->SetNiagaraVariableInt(TEXT("SpawnRate"), RainParticlesPerSecond);
+      RainActor->GetNiagaraComponent()->SetVariableInt(FName("SpawnRate"), RainParticlesPerSecond);
     }
   }
 

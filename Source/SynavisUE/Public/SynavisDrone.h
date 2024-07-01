@@ -155,6 +155,9 @@ public:
   UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Network")
     bool RespondWithTiming = false;
 
+    UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Network")
+    bool VagueMatchProperties = false;
+
   UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Debug")
     bool LogResponses = false;
 
