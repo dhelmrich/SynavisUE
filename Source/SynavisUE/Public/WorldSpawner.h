@@ -44,6 +44,9 @@ public:
   UPROPERTY(EditAnywhere, Category = "Field")
   class UBoxComponent* CropField;
 
+  UPROPERTY(EditAnywhere, Category = "Coupling")
+  UMaterial* DefaultMaterial;
+
   UPROPERTY(BlueprintReadOnly, Category = "Management")
   TArray<FObjectSpawnInstance> SpawnedObjects;
 
@@ -120,9 +123,6 @@ protected:
   AActor* HeldActor;
   UPROPERTY()
   USceneComponent* HeldComponent;
-
-  UPROPERTY()
-  UMaterial* DefaultMaterial;
 
 public:
   // Called every frame
