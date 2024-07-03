@@ -130,6 +130,8 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Actor")
     FString ListObjectPropertiesAsJSON(UObject* Object);
 
+  UFUNCTION(BlueprintCallable, Category = "View")
+    void StoreCameraBuffer(int BufferNumber, FString NameBase);
 
   void ApplyJSONToObject(UObject* Object, FJsonObject* JSON);
 
@@ -152,6 +154,9 @@ public:
 
   UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Network")
     bool RespondWithTiming = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Network")
+    bool VagueMatchProperties = false;
 
   UPROPERTY(VisibleAnywhere, BlueprintReadWRite, Category = "Debug")
     bool LogResponses = false;

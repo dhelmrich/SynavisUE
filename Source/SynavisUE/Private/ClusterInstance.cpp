@@ -24,16 +24,16 @@ AClusterInstance::AClusterInstance()
 void AClusterInstance::TakeCommand(FJsonObject* Command)
 {
   FString CommandName;
-  if (Command->TryGetStringField("Command", CommandName))
+  if (Command->TryGetStringField(TEXT("Command"), CommandName))
   {
-    if (CommandName == "Sample")
+    if (CommandName == TEXT("Sample"))
     {
       FString PropertyToSample;
-      if (Command->TryGetStringField("Target", PropertyToSample))
+      if (Command->TryGetStringField(TEXT("Target"), PropertyToSample))
       {
         // check if actor name was also provided
         FString ActorName;
-        if (Command->TryGetStringField("FromActor", ActorName))
+        if (Command->TryGetStringField(TEXT("FromActor"), ActorName))
         {
           // check if actor exists
           TArray<AActor*> Actors;
@@ -64,63 +64,63 @@ void AClusterInstance::TakeCommand(FJsonObject* Command)
         }
       }
     }
-    else if (CommandName == "Aggregate")
+    else if (CommandName == TEXT("Aggregate"))
     {
       FString PropertyToAggregate;
-      if (Command->TryGetStringField("Target", PropertyToAggregate))
+      if (Command->TryGetStringField(TEXT("Target"), PropertyToAggregate))
       {
         FString ClassName, PropertyName;
-        if (!Command->TryGetStringField("From", ClassName))
+        if (!Command->TryGetStringField(TEXT("From"), ClassName))
         {
           UE_LOG(LogActor, Error, TEXT("No class name provided for aggregation"));
           return;
         }
-        if(!Command->TryGetStringField("Property", PropertyName))
+        if(!Command->TryGetStringField(TEXT("Property"), PropertyName))
         {
           UE_LOG(LogActor, Error ,TEXT("No property name provided for aggregation"));
           return;
         }
-        if (PropertyToAggregate == "Count")
+        if (PropertyToAggregate == TEXT("Count"))
         {
           // aggregate count
         }
-        else if (PropertyToAggregate == "Sum")
+        else if (PropertyToAggregate == TEXT("Sum"))
         {
           // aggregate sum
         }
-        else if (PropertyToAggregate == "Average")
+        else if (PropertyToAggregate == TEXT("Average"))
         {
           // aggregate average
         }
-        else if (PropertyToAggregate == "Min")
+        else if (PropertyToAggregate == TEXT("Min"))
         {
           // aggregate min
         }
-        else if (PropertyToAggregate == "Max")
+        else if (PropertyToAggregate == TEXT("Max"))
         {
           // aggregate max
         }
-        else if (PropertyToAggregate == "Variance")
+        else if (PropertyToAggregate == TEXT("Variance"))
         {
           // aggregate variance
         }
-        else if (PropertyToAggregate == "StandardDeviation")
+        else if (PropertyToAggregate == TEXT("StandardDeviation"))
         {
           // aggregate standard deviation
         }
-        else if (PropertyToAggregate == "Histogram")
+        else if (PropertyToAggregate == TEXT("Histogram"))
         {
           // aggregate histogram
         }
-        else if (PropertyToAggregate == "Percentile")
+        else if (PropertyToAggregate == TEXT("Percentile"))
         {
           // aggregate percentile
         }
-        else if (PropertyToAggregate == "Median")
+        else if (PropertyToAggregate == TEXT("Median"))
         {
           // aggregate median
         }
-        else if (PropertyToAggregate == "Range")
+        else if (PropertyToAggregate == TEXT("Range"))
         {
           // aggregate range
         }
