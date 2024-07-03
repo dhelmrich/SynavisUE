@@ -35,6 +35,8 @@
 #include "Components/SkyLightComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
+
+
 THIRD_PARTY_INCLUDES_START
 #include <limits>
 THIRD_PARTY_INCLUDES_END
@@ -1985,6 +1987,13 @@ void ASynavisDrone::BeginPlay()
   {
     WorldSpawner->ReceiveStreamingCommunicatorRef(this);
   }
+
+  auto* Controller = GetWorld()->GetFirstPlayerController();
+  if (Controller)
+  {
+    Controller->ConsoleCommand(TEXT("Log LogPixelStreaming off"));
+  }
+
 }
 
 void ASynavisDrone::PostInitializeComponents()
