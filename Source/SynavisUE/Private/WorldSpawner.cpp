@@ -206,7 +206,7 @@ AActor* AWorldSpawner::SpawnProcMesh(TArray<FVector> Points, TArray<FVector> Nor
   Actor->ProcMesh->CreateMeshSection_LinearColor(0, Points, Triangles, Normals,
     (TexCoords.Num() == Points.Num()) ? TexCoords : TArray<FVector2D>(),
     TArray<FLinearColor>(),
-    (Tangents.Num() == Normals.Num()) ? Tangents : TArray<FProcMeshTangent>(), false);
+    (Tangents.Num() == Normals.Num()) ? Tangents : TArray<FProcMeshTangent>(), true);
   this->OnSpawnProcMesh.Broadcast(Actor->ProcMesh);
   return Actor;
 }
